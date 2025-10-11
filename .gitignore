@@ -1,0 +1,18 @@
+# Ignorer tous les datasets volumineux
+climate_dataset/
+elevation_dataset/
+fire_dataset/
+shapefiles/
+land_dataset/
+soil_dataset/
+out/
+
+# Ignorer les checkpoints Jupyter
+*.ipynb_checkpoints
+
+# Ignorer les logs éventuels
+*.log
+
+# Ignorer les fichiers système
+.DS_Store
+Thumbs.db
