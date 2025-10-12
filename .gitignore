@@ -6,7 +6,7 @@ shapefiles/
 land_dataset/
 soil_dataset/
 out/
-
+DMenv/
 # Ignorer les checkpoints Jupyter
 *.ipynb_checkpoints
 
