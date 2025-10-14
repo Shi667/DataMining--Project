@@ -6,3 +6,4 @@ fiona
 dbfread
 pyproj
 pyshp
+pyodbc
