@@ -6,7 +6,7 @@ import matplotlib.patches as mpatches
 import pandas as pd
 
 
-def show_landcover(
+def show_landcover_separated(
     source,
     legend_path,
     code_column="GRIDCODE",
@@ -14,31 +14,10 @@ def show_landcover(
     figsize=(10, 8),
     alpha=0.9,
     edgecolor="none",
-    legend_position="bottom",  # "right" also supported
 ):
     """
-    Display a land cover shapefile using colors and labels from a GlobCover legend.
-
-    Parameters
-    ----------
-    source : str or GeoDataFrame
-        Path to the shapefile (.shp) or a loaded GeoDataFrame.
-    legend_path : str
-        Path to the legend Excel file (e.g., globcover_legend.xls).
-    code_column : str, default="GRIDCODE"
-        Column in the shapefile that corresponds to the 'Value' column in the legend.
-    title : str, optional
-        Title of the plot.
-    figsize : tuple, default=(10, 8)
-        Figure size.
-    alpha : float, default=0.9
-        Transparency for the polygons.
-    edgecolor : str, default="none"
-        Border color.
-    legend_position : str, default="bottom"
-        Where to place the legend — "bottom" or "right".
+    Display a land cover shapefile and its legend in separate figures.
     """
-
     # --- Load shapefile ---
     if isinstance(source, str):
         gdf = gpd.read_file(source)
@@ -57,7 +36,6 @@ def show_landcover(
     # --- Load legend ---
     legend = pd.read_excel(legend_path)
     legend.columns = legend.columns.str.strip()
-
     required_cols = {"Value", "Label", "Red", "Green", "Blue"}
     if not required_cols.issubset(legend.columns):
         raise ValueError(
@@ -69,25 +47,23 @@ def show_landcover(
         lambda row: f"#{int(row['Red']):02x}{int(row['Green']):02x}{int(row['Blue']):02x}",
         axis=1,
     )
-
     value_to_color = dict(zip(legend["Value"], legend["color"]))
     value_to_label = dict(zip(legend["Value"], legend["Label"]))
 
     # --- Assign colors to GeoDataFrame ---
-    gdf["_color"] = gdf[code_column].map(value_to_color)
-    gdf["_label"] = gdf[code_column].map(value_to_label)
+    gdf["_color"] = gdf[code_column].map(value_to_color).fillna("#808080")
+    gdf["_label"] = gdf[code_column].map(value_to_label).fillna("Unknown")
 
-    # For any missing values → gray color
-    gdf["_color"] = gdf["_color"].fillna("#808080")
-    gdf["_label"] = gdf["_label"].fillna("Unknown")
+    # --- Plot map only ---
+    fig_map, ax_map = plt.subplots(figsize=figsize)
+    gdf.plot(ax=ax_map, color=gdf["_color"], edgecolor=edgecolor, alpha=alpha)
+    ax_map.set_title(title, fontsize=14)
+    ax_map.axis("off")
+    plt.tight_layout()
+    plt.show()
 
-    # --- Plot ---
-    fig, ax = plt.subplots(figsize=figsize)
-    gdf.plot(ax=ax, color=gdf["_color"], edgecolor=edgecolor, alpha=alpha)
-    ax.set_title(title, fontsize=14)
-    ax.axis("off")
-
-    # --- Legend ---
+    # --- Plot legend only ---
+    fig_legend, ax_legend = plt.subplots(figsize=(6, 8))
     handles = [
         plt.Line2D(
             [0],
@@ -96,31 +72,12 @@ def show_landcover(
             color="w",
             label=label,
             markerfacecolor=color,
-            markersize=8,
+            markersize=10,
         )
         for label, color in zip(legend["Label"], legend["color"])
     ]
-
-    if legend_position == "right":
-        ax.legend(
-            handles=handles,
-            title="Land Cover Classes",
-            loc="center left",
-            bbox_to_anchor=(1.02, 0.5),
-            fontsize=8,
-        )
-    elif legend_position == "bottom":
-        ax.legend(
-            handles=handles,
-            title="Land Cover Classes",
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.15),
-            ncol=3,
-            fontsize=8,
-        )
-    else:
-        raise ValueError("legend_position must be 'bottom' or 'right'")
-
+    ax_legend.legend(handles=handles, title="Land Cover Classes", loc="center")
+    ax_legend.axis("off")
     plt.tight_layout()
     plt.show()
 
