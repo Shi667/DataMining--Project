@@ -59,5 +59,6 @@ def clip_raster_with_shape(raster_input, shape_input):
             }
         )
 
-
     return out_image, out_transform, out_meta
+
+
