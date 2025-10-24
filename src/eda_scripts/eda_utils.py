@@ -9,6 +9,24 @@ import seaborn as sns
 import geopandas as gpd
 from shapely.geometry import Point
 from IPython.display import display
+from scipy import stats
+
+
+# ==============================================================
+# 1.1 Q-Q Plot
+# ==============================================================
+
+
+def plot_qq(df, column, dist="norm"):
+    """
+    Q–Q plot of a column against a theoretical distribution (default: normal).
+    """
+    data = df[column].dropna().values
+    plt.figure(figsize=(6, 6))
+    stats.probplot(data, dist=dist, plot=plt)
+    plt.title(f"Q–Q Plot: {column} vs {dist}")
+    plt.tight_layout()
+    plt.show()
 
 # ==============================================================
 # 1. Basic Data Overview
