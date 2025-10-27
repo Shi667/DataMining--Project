@@ -8,3 +8,4 @@ pyproj
 pyshp
 pyodbc
 seaborn
+scikit-learn
