@@ -44,7 +44,8 @@ def describe_dataset(df, cols=None):
         The DataFrame to analyze.
     cols : list, optional
         List of column names to include in the descriptive statistics.
-        If None, all columns are used.
+        If None, automatically uses only numeric (data) columns,
+        excluding location-related columns like latitude and longitude.
     """
     print("=== 🧾 Dataset Preview ===")
     display(df.head())
@@ -53,10 +54,20 @@ def describe_dataset(df, cols=None):
     print(df.info())
 
     print("\n=== 📊 Descriptive Statistics ===")
-    if cols is not None:
-        display(df[cols].describe(include="all"))
+
+    # Automatically select data columns if cols not provided
+    if cols is None:
+        # Exclude location columns explicitly, then select numeric ones
+        exclude_cols = ["latitude", "longitude"]
+        data_cols = [
+            c
+            for c in df.select_dtypes(include=["number"]).columns
+            if c not in exclude_cols
+        ]
     else:
-        display(df.describe(include="all"))
+        data_cols = cols
+
+    display(df[data_cols].describe(include="all"))
 
 
 def check_missing_values(df):
@@ -160,7 +171,7 @@ def plot_correlation_matrix(df, cols=None):
         If None, all numeric columns are used.
     """
     # Select columns
-    data = df[cols] if cols is not None else df.select_dtypes(include='number')
+    data = df[cols] if cols is not None else df.select_dtypes(include="number")
 
     # Compute correlation matrix
     corr = data.corr(numeric_only=True)
