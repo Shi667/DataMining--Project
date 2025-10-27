@@ -28,17 +28,36 @@ def plot_qq(df, column, dist="norm"):
     plt.tight_layout()
     plt.show()
 
+
 # ==============================================================
 # 1. Basic Data Overview
 # ==============================================================
 
-def describe_dataset(df):
-    print("=== Dataset Preview ===")
+
+def describe_dataset(df, cols=None):
+    """
+    Display general information and descriptive statistics for a DataFrame.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The DataFrame to analyze.
+    cols : list, optional
+        List of column names to include in the descriptive statistics.
+        If None, all columns are used.
+    """
+    print("=== 🧾 Dataset Preview ===")
     display(df.head())
-    print("\n=== General Information ===")
+
+    print("\n=== ℹ️ General Information ===")
     print(df.info())
-    print("\n=== Descriptive Statistics ===")
-    display(df.describe(include='all'))
+
+    print("\n=== 📊 Descriptive Statistics ===")
+    if cols is not None:
+        display(df[cols].describe(include="all"))
+    else:
+        display(df.describe(include="all"))
+
 
 def check_missing_values(df):
     df_clean = df.replace(["", " ", "NaN", "nan", "NULL", "null"], np.nan)
@@ -51,6 +70,7 @@ def check_missing_values(df):
         display(missing)
     return missing
 
+
 def plot_missing_values(df):
     """
     Visualize missing values across the dataset as a heatmap.
@@ -62,28 +82,50 @@ def plot_missing_values(df):
     plt.ylabel("Rows")
     plt.show()
 
+
 # ==============================================================
 # 2. Summary Statistics
 # ==============================================================
 
+
 def summary_stats(df, columns):
-    return df[columns].agg(['mean', 'median', 'std', 'min', 'max', 'count'])
+    return df[columns].agg(["mean", "median", "std", "min", "max", "count"])
+
 
 def report_skew_kurtosis(df, columns):
     for col in columns:
         print(f"{col}: skew={df[col].skew():.2f}, kurtosis={df[col].kurtosis():.2f}")
 
+
 # ==============================================================
 # 3. Visualization Functions
 # ==============================================================
 
-def plot_histogram(df, column, bins=30):
+
+def plot_variable_distribution(df, column, bins=30, color=None):
+    """
+    Plot the distribution of a numeric variable with an optional KDE curve.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The DataFrame containing the data.
+    column : str
+        The name of the column to plot.
+    bins : int, optional
+        Number of histogram bins (default: 30).
+    color : str, optional
+        Color for the histogram (default: automatic seaborn palette).
+    """
     plt.figure(figsize=(8, 5))
-    sns.histplot(df[column], kde=True, bins=bins)
-    plt.title(f"Distribution of {column}")
-    plt.xlabel(column)
-    plt.ylabel("Frequency")
+    sns.histplot(df[column], kde=True, bins=bins, color=color)
+    plt.title(f"Distribution of {column}", fontsize=13, fontweight="bold")
+    plt.xlabel(column, fontsize=11)
+    plt.ylabel("Frequency", fontsize=11)
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
     plt.show()
+
 
 def plot_boxplot(df, column, by=None):
     plt.figure(figsize=(8, 5))
@@ -95,6 +137,7 @@ def plot_boxplot(df, column, by=None):
         plt.title(f"Boxplot of {column}")
     plt.show()
 
+
 def plot_scatter(df, x, y, hue=None):
     plt.figure(figsize=(8, 6))
     sns.scatterplot(data=df, x=x, y=y, hue=hue)
@@ -103,37 +146,61 @@ def plot_scatter(df, x, y, hue=None):
     plt.ylabel(y)
     plt.show()
 
-def plot_correlation_matrix(df):
+
+def plot_correlation_matrix(df, cols=None):
+    """
+    Plot a correlation matrix for selected numeric columns.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The DataFrame containing the data.
+    cols : list, optional
+        List of columns to include in the correlation matrix.
+        If None, all numeric columns are used.
+    """
+    # Select columns
+    data = df[cols] if cols is not None else df.select_dtypes(include='number')
+
+    # Compute correlation matrix
+    corr = data.corr(numeric_only=True)
+
+    # Plot heatmap
     plt.figure(figsize=(10, 8))
-    corr = df.corr(numeric_only=True)
-    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt='.2f')
-    plt.title("Correlation Matrix")
+    sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f", square=True)
+    plt.title("Correlation Matrix", fontsize=14, fontweight="bold")
+    plt.tight_layout()
     plt.show()
+
 
 def plot_pairplot(df, columns=None, hue=None):
     """
     Create a seaborn pairplot for multivariate relationships.
     """
-    sns.pairplot(df if columns is None else df[columns + ([hue] if hue else [])], hue=hue)
+    sns.pairplot(
+        df if columns is None else df[columns + ([hue] if hue else [])], hue=hue
+    )
     plt.show()
+
 
 def compare_distributions(df, column, by):
     """
     Histograms of one variable split by a categorical column.
     """
-    plt.figure(figsize=(10,6))
+    plt.figure(figsize=(10, 6))
     for group in df[by].unique():
-        sns.histplot(df[df[by]==group][column], kde=True, alpha=0.6, label=str(group))
+        sns.histplot(df[df[by] == group][column], kde=True, alpha=0.6, label=str(group))
     plt.legend(title=by)
     plt.title(f"Distribution of {column} by {by}")
     plt.show()
+
 
 # ==============================================================
 # 4. Outlier Detection
 # ==============================================================
 
+
 def detect_outliers_iqr(df, column, factor=1.5):
-    
 
     # Compute quartiles and IQR
     Q1 = df[column].quantile(0.25)
@@ -164,11 +231,13 @@ def detect_outliers_iqr(df, column, factor=1.5):
 # 5. Geospatial (GeoDataFrame) Functions
 # ==============================================================
 
+
 def plot_geodata(gdf, column=None, title="Map"):
     gdf.plot(column=column, legend=True, figsize=(10, 8))
     plt.title(title)
-    plt.axis('off')
+    plt.axis("off")
     plt.show()
+
 
 def summarize_geodata(gdf):
     print("=== GeoDataFrame Info ===")
@@ -180,42 +249,48 @@ def summarize_geodata(gdf):
     print("\n=== Descriptive Statistics for Numeric Columns ===")
     display(gdf.describe())
 
+
 def plot_spatial_heatmap(gdf, title="Spatial Heatmap", bins=100):
     x = gdf.geometry.x
     y = gdf.geometry.y
     plt.figure(figsize=(10, 7))
-    plt.hexbin(x, y, gridsize=bins, cmap='YlOrRd', mincnt=1)
+    plt.hexbin(x, y, gridsize=bins, cmap="YlOrRd", mincnt=1)
     plt.colorbar(label="Counts")
     plt.title(title)
     plt.xlabel("Longitude")
     plt.ylabel("Latitude")
     plt.show()
 
+
 # ==============================================================
 # 6. Data Quality & Integrity Checks
 # ==============================================================
+
 
 def data_quality_report(df):
     """
     Generate a quick data quality summary for each column.
     """
-    report = pd.DataFrame({
-        "Data Type": df.dtypes,
-        "Missing (%)": df.isnull().mean() * 100,
-        "Unique Values": df.nunique(),
-        "Zeros (%)": (df == 0).mean() * 100,
-        "Negative Values (%)": (df.select_dtypes(include=np.number) < 0).mean() * 100
-    })
+    report = pd.DataFrame(
+        {
+            "Data Type": df.dtypes,
+            "Missing (%)": df.isnull().mean() * 100,
+            "Unique Values": df.nunique(),
+            "Zeros (%)": (df == 0).mean() * 100,
+            "Negative Values (%)": (df.select_dtypes(include=np.number) < 0).mean()
+            * 100,
+        }
+    )
 
     print("=== Data Quality Report ===")
     display(report.sort_values("Missing (%)", ascending=False))
     return report
 
 
-
 # ==============================================================
 # 7. Additional Visualization Utilities
 # ==============================================================
+
 
 def plot_multiple_distributions(df, columns, bins=30):
     """
@@ -257,7 +332,6 @@ def plot_relationship_grid(df, columns):
     sns.pairplot(df[columns], kind="reg", diag_kind="kde")
     plt.suptitle("Pairwise Relationships", y=1.02)
     plt.show()
-
 
 
 def visualize_outliers(df, column):

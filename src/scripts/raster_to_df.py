@@ -6,7 +6,7 @@ from shapely.geometry import Point
 
 
 def raster_to_dataframe_filter_background(
-    out_image: np.ndarray, out_transform: Affine, shape_input
+    out_image: np.ndarray, out_transform: Affine, shape_input, value_name: str = "value"
 ) -> pd.DataFrame:
     """
     Transforms a clipped raster NumPy array (2D) into a pandas DataFrame,
@@ -24,7 +24,7 @@ def raster_to_dataframe_filter_background(
     Returns
     -------
     pd.DataFrame
-        A DataFrame with 'value', 'x', and 'y', retaining internal missing data (NaNs).
+        A DataFrame with 'value_name', 'x', and 'y', retaining internal missing data (NaNs).
     """
 
     # --- 1. Get the geometry(ies) for masking ---
@@ -52,7 +52,7 @@ def raster_to_dataframe_filter_background(
         row_indices_flat + 0.5,
     )  # Adding 0.5 for cell center
 
-    df = pd.DataFrame({"value": out_image.flatten(), "x": x_coords, "y": y_coords})
+    df = pd.DataFrame({value_name: out_image.flatten(), "x": x_coords, "y": y_coords})
 
     # --- 3. Create a spatial mask to identify background pixels ---
     print("Creating spatial mask to isolate background...")
