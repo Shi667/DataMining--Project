@@ -1,9 +1,7 @@
 import geopandas as gpd
+import rasterio
 import pandas as pd
-
-
-import geopandas as gpd
-import pandas as pd
+from shapely.geometry import Point
 
 
 def extract_features_at_points(
@@ -70,6 +68,45 @@ def extract_features_at_points(
     return joined
 
 
+def extract_raster_values(
+    csv_path, raster_path, lat_col="latitude", lon_col="longitude", output_path=None
+):
+    import pandas as pd
+    import rasterio
+    from shapely.geometry import Point
+
+    df = pd.read_csv(csv_path)
+    points = [Point(xy) for xy in zip(df[lon_col], df[lat_col])]
+
+    with rasterio.open(raster_path) as src:
+        # Sample the raster at the coordinates and get the first band value (index 0)
+        values = [x[0] for x in src.sample([(p.x, p.y) for p in points])]
+
+    df["HWSD2_SMU_ID"] = values
+
+    # Select only the required columns: latitude, longitude, and HWSD2_SMU_ID
+    output_df = df[[lat_col, lon_col, "HWSD2_SMU_ID"]]
+
+    if output_path:
+        output_df.to_csv(output_path, index=False)
+
+    return output_df
+
+
+def join_soil_attributes(fire_soil_csv, soil_attributes_csv, output_path=None):
+    df_fires = pd.read_csv(fire_soil_csv)
+    df_soil = pd.read_csv(soil_attributes_csv)
+
+    merged = df_fires.merge(df_soil, on="HWSD2_SMU_ID", how="left")
+
+    if output_path:
+        merged.to_csv(output_path, index=False)
+
+    return merged
+
+
+"""
+
 fires_with_landcover = extract_features_at_points(
     csv_path="../data/fire_dataset/viirs-jpss1_2024_Algeria.csv",
     shapefile_path="../data/land_dataset/algeria/dza_gc_adg.shp",
@@ -77,5 +114,21 @@ fires_with_landcover = extract_features_at_points(
     lon_col="longitude",
     keep_cols=["GRIDCODE"],  # can be ["GRIDCODE", "CLASS", "AREA", ...]
     output_path="../data/features/landcover_at_fires.csv",
+)"""
+
+fires_with_soil_id = extract_raster_values(
+    csv_path="../data/fire_dataset/viirs-jpss1_2024_Algeria.csv",
+    raster_path="../data/soil_dataset/HWSD2_RASTER/HWSD2.bil",
+    output_path="../data/features/fire_soil_ids.csv",
 )
+
+
+fires_with_soil = join_soil_attributes(
+    fire_soil_csv="../data/features/fire_soil_ids.csv",
+    soil_attributes_csv="./D1_soil_features_alg_tun.csv",
+    output_path="../data/features/soil_features_at_fires.csv",
+)
+
+
+
 
