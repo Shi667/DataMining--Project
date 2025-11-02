@@ -1,10 +1,10 @@
 # Ignorer tous les datasets volumineux
-climate_dataset/
-elevation_dataset/
+be15_grd/
 fire_dataset/
 shapefiles/
-land_dataset/
-soil_dataset/
+land_dataset/algeria/
+land_dataset/tunisia/
+soil_dataset/original/
 out/
 DMenv/
 # Ignorer les checkpoints Jupyter
