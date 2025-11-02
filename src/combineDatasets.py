@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 
 
-def extract_raster_values_to_csv(
+def extract_features_elevation(
     raster_path: str,
     fire_csv_path: str,
     output_csv: str,
@@ -62,7 +62,7 @@ def extract_raster_values_to_csv(
     return df
 
 
-def extract_features_at_points(
+def extract_features_landcover(
     csv_path: str,
     shapefile_path: str,
     lat_col: str = "latitude",
@@ -126,8 +126,14 @@ def extract_features_at_points(
     return joined
 
 
-def extract_raster_values(
-    csv_path, raster_path, lat_col="latitude", lon_col="longitude", output_path=None
+def extract_features_soil(
+    csv_path,
+    raster_path,
+    soil_attributes_csv,
+    lat_col="latitude",
+    lon_col="longitude",
+    output_soil_ids: str = None,
+    output_soil_feature: str = None,
 ):
     import pandas as pd
     import rasterio
@@ -143,27 +149,23 @@ def extract_raster_values(
     df["HWSD2_SMU_ID"] = values
 
     # Select only the required columns: latitude, longitude, and HWSD2_SMU_ID
-    output_df = df[[lat_col, lon_col, "HWSD2_SMU_ID"]]
+    output_ids = df[[lat_col, lon_col, "HWSD2_SMU_ID"]]
 
-    if output_path:
-        output_df.to_csv(output_path, index=False)
+    if output_soil_ids:
+        output_ids.to_csv(output_soil_ids, index=False)
 
-    return output_df
-
-
-def join_soil_attributes(fire_soil_csv, soil_attributes_csv, output_path=None):
-    df_fires = pd.read_csv(fire_soil_csv)
+    df_fires = output_ids
     df_soil = pd.read_csv(soil_attributes_csv)
 
     merged = df_fires.merge(df_soil, on="HWSD2_SMU_ID", how="left")
 
-    if output_path:
-        merged.to_csv(output_path, index=False)
+    if output_soil_feature:
+        merged.to_csv(output_soil_feature, index=False)
 
-    return merged
+    return (output_ids, merged)
 
 
-def extract_monthly_clim_for_fires(
+def extract_features_monthly_clim(
     fire_csv,
     raster_dict,
     lat_col="latitude",
@@ -256,7 +258,7 @@ def organize_monthly_climat_files(data_folder_path):
 
 # --- Example Usage ---
 
-
+"""
 # Organize the files
 monthly_tmax_data = organize_monthly_climat_files(
     "../data/climate_dataset/5min/max/*.tif"
@@ -269,7 +271,7 @@ monthly_tprec_data = organize_monthly_climat_files(
 )
 
 
-fires_tmax = extract_monthly_clim_for_fires(
+fires_tmax = extract_features_monthly_clim(
     fire_csv="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     raster_dict=monthly_tmax_data,
     output_path="../data/features/fire_tmax.csv",
@@ -277,7 +279,7 @@ fires_tmax = extract_monthly_clim_for_fires(
 )
 
 
-fires_tmin = extract_monthly_clim_for_fires(
+fires_tmin = extract_features_monthly_clim(
     fire_csv="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     raster_dict=monthly_tmin_data,
     output_path="../data/features/fire_tmin.csv",
@@ -285,7 +287,7 @@ fires_tmin = extract_monthly_clim_for_fires(
 )
 
 
-fires_tprec = extract_monthly_clim_for_fires(
+fires_tprec = extract_features_monthly_clim(
     fire_csv="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     raster_dict=monthly_tprec_data,
     output_path="../data/features/fire_tprec.csv",
@@ -293,7 +295,7 @@ fires_tprec = extract_monthly_clim_for_fires(
 )
 
 
-fires_with_landcover = extract_features_at_points(
+fires_with_landcover = extract_features_landcover(
     csv_path="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     shapefile_path="../data/land_dataset/combined/alg_tun_landcvr.shx",
     lat_col="latitude",
@@ -302,21 +304,16 @@ fires_with_landcover = extract_features_at_points(
     output_path="../data/features/fire_landcover.csv",
 )
 
-fires_with_soil_id = extract_raster_values(
+fires_with_soil = extract_features_soil(
     csv_path="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     raster_path="../data/soil_dataset/HWSD2_RASTER/HWSD2.bil",
-    output_path="../data/features/fire_soil_ids.csv",
-)
-
-
-fires_with_soil = join_soil_attributes(
-    fire_soil_csv="../data/features/fire_soil_ids.csv",
     soil_attributes_csv="./D1_soil_features_alg_tun.csv",
-    output_path="../data/features/fire_soil_features.csv",
+    output_soil_ids="../data/features/fire_soil_ids.csv",
+    output_soil_feature="../data/features/fire_soil.csv",
 )
 
-
-extract_raster_values_to_csv(
+"""
+fires_with_elevation = extract_features_elevation(
     raster_path="../data/elevation_dataset/elevation_clipped.tif",
     fire_csv_path="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
     output_csv="../data/features/fire_elevation.csv",
