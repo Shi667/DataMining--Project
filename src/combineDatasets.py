@@ -1,13 +1,65 @@
 import geopandas as gpd
 import rasterio
 import pandas as pd
-from shapely.geometry import Point
-import rasterio
-import pandas as pd
-from shapely.geometry import Point
 from datetime import datetime
 import glob
 import os
+from tqdm import tqdm
+
+
+def extract_raster_values_to_csv(
+    raster_path: str,
+    fire_csv_path: str,
+    output_csv: str,
+    lat_col: str = "latitude",
+    lon_col: str = "longitude",
+    value_name: str = "elevation",
+) -> pd.DataFrame:
+    """
+    Extract raster values (e.g., elevation) at given latitude/longitude points
+    from a fire dataset CSV and save the result to a new CSV.
+
+    Parameters
+    ----------
+    raster_path : str
+        Path to the .tif raster file.
+    fire_csv_path : str
+        Path to the fire dataset CSV file.
+    output_csv : str
+        Path where to save the output CSV file.
+    lat_col : str
+        Column name for latitude in the fire CSV.
+    lon_col : str
+        Column name for longitude in the fire CSV.
+    value_name : str
+        Name for the new raster value column (e.g., "elevation", "tmax").
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added raster value column.
+    """
+
+    # --- Load fire dataset ---
+    df = pd.read_csv(fire_csv_path)
+    print(f"Loaded {len(df)} points from {fire_csv_path}")
+
+    # --- Open raster and extract values ---
+    with rasterio.open(raster_path) as src:
+        coords = [(x, y) for x, y in zip(df[lon_col], df[lat_col])]
+        values = [
+            val[0] if val[0] is not None else None
+            for val in tqdm(
+                src.sample(coords), total=len(coords), desc=f"Extracting {value_name}"
+            )
+        ]
+
+    # --- Add column and save ---
+    df[value_name] = values
+    df.to_csv(output_csv, index=False)
+    print(f"✅ Saved extracted values to {output_csv}")
+
+    return df
 
 
 def extract_features_at_points(
@@ -261,4 +313,12 @@ fires_with_soil = join_soil_attributes(
     fire_soil_csv="../data/features/fire_soil_ids.csv",
     soil_attributes_csv="./D1_soil_features_alg_tun.csv",
     output_path="../data/features/fire_soil_features.csv",
+)
+
+
+extract_raster_values_to_csv(
+    raster_path="../data/elevation_dataset/elevation_clipped.tif",
+    fire_csv_path="../data/fire_dataset/viirs-jpss1_2024_alg_Tun.csv",
+    output_csv="../data/features/fire_elevation.csv",
+    value_name="elevation",
 )
