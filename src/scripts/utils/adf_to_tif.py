@@ -124,6 +124,6 @@ def convert_and_clip_esri_grid(src_folder, shape_input, dst_tif):
 if __name__ == "__main__":
     src_folder = r"../../../data/elevation_dataset/be15_grd/"
     shape_path = r"../../../data/shapefiles/combined/alg_tun.shp"
-    dst_tif = r"../../../data/elevation_dataset/selevation_clipped.tif"
+    dst_tif = r"../../../data/elevation_dataset/elevation_clipped.tif"
 
     convert_and_clip_esri_grid(src_folder, shape_path, dst_tif)

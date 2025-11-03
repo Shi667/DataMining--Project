@@ -16,27 +16,8 @@ def extract_features_elevation(
 ) -> pd.DataFrame:
     """
     Extract raster values (e.g., elevation) at given latitude/longitude points
-    from a fire dataset CSV and save the result to a new CSV.
-
-    Parameters
-    ----------
-    raster_path : str
-        Path to the .tif raster file.
-    fire_csv_path : str
-        Path to the fire dataset CSV file.
-    output_csv : str
-        Path where to save the output CSV file.
-    lat_col : str
-        Column name for latitude in the fire CSV.
-    lon_col : str
-        Column name for longitude in the fire CSV.
-    value_name : str
-        Name for the new raster value column (e.g., "elevation", "tmax").
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with added raster value column.
+    from a fire dataset CSV and save the result to a new CSV containing only
+    latitude, longitude, and the extracted value.
     """
 
     # --- Load fire dataset ---
@@ -53,12 +34,16 @@ def extract_features_elevation(
             )
         ]
 
-    # --- Add column and save ---
-    df[value_name] = values
-    df.to_csv(output_csv, index=False)
-    print(f"✅ Saved extracted values to {output_csv}")
+    # --- Create new DataFrame with only lat, lon, and extracted values ---
+    result_df = pd.DataFrame(
+        {lat_col: df[lat_col], lon_col: df[lon_col], value_name: values}
+    )
 
-    return df
+    # --- Save result ---
+    result_df.to_csv(output_csv, index=False)
+    print(f"✅ Saved extracted {value_name} to {output_csv}")
+
+    return result_df
 
 
 def extract_features_landcover(
