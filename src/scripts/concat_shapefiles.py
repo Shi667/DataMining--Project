@@ -38,8 +38,8 @@ def concat_shapefiles(path1, path2):
 
 # === Combine Algeria and Tunisia landcover shapefiles ===
 alg_tun_shp_landcvr = concat_shapefiles(
-    "../../data/land_dataset/algeria/dza_gc_adg.shp",
-    "../../data/land_dataset/tunisia/tun_gc_adg.shp",
+    "../data/land_dataset/algeria/dza_gc_adg.shp",
+    "../data/land_dataset/tunisia/tun_gc_adg.shp",
 )
 
 # === Describe the combined shapefile ===
