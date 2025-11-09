@@ -109,7 +109,7 @@ def sample_raster_at_points(
 # Step 1: Generate grid (only once)
 grid_df = generate_grid_in_shape(
     "../../../data/shapefiles/combined/alg_tun.shp",
-    resolution=0.05,
+    resolution=0.01,
     output_csv="grid_points.csv",
 )
 
