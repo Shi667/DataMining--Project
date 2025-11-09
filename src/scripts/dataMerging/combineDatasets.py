@@ -122,31 +122,53 @@ def extract_features_soil(
     import pandas as pd
     import rasterio
     from shapely.geometry import Point
+    import numpy as np
 
+    # Load input points
     df = pd.read_csv(csv_path)
     points = [Point(xy) for xy in zip(df[lon_col], df[lat_col])]
 
+    # Sample raster for soil IDs
     with rasterio.open(raster_path) as src:
-        # Sample the raster at the coordinates and get the first band value (index 0)
         values = [x[0] for x in src.sample([(p.x, p.y) for p in points])]
 
     df["HWSD2_SMU_ID"] = values
 
-    # Select only the required columns: latitude, longitude, and HWSD2_SMU_ID
+    # Output only latitude, longitude, and HWSD2_SMU_ID
     output_ids = df[[lat_col, lon_col, "HWSD2_SMU_ID"]]
-
     if output_soil_ids:
         output_ids.to_csv(output_soil_ids, index=False)
 
-    df_fires = output_ids
+    # Load soil attributes
     df_soil = pd.read_csv(soil_attributes_csv)
 
-    merged = df_fires.merge(df_soil, on="HWSD2_SMU_ID", how="left")
+    # Merge on HWSD2_SMU_ID
+    merged = output_ids.merge(df_soil, on="HWSD2_SMU_ID", how="left")
 
+    # Remove rows where all soil attributes after 3rd column are repeated
+    def is_repeated(row):
+        values = row[3:]  # skip latitude, longitude, HWSD2_SMU_ID
+        # keep only non-empty/non-NaN values
+        values = [v for v in values if pd.notna(v) and v != ""]
+        return len(values) > 0 and all(v == values[0] for v in values)
+
+    merged.loc[merged.apply(is_repeated, axis=1), :] = np.nan
+
+    # Drop the HWSD2_SMU_ID column from the final merged CSV
+    if "HWSD2_SMU_ID" in merged.columns:
+        merged = merged.drop(columns=["HWSD2_SMU_ID"])
+
+    # Save final merged soil features
     if output_soil_feature:
         merged.to_csv(output_soil_feature, index=False)
 
-    return (output_ids, merged)
+    return output_ids, merged
+
+
+import rasterio
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
 
 def extract_features_monthly_clim(
@@ -157,52 +179,67 @@ def extract_features_monthly_clim(
     date_col="acq_date",
     output_path=None,
     value_name: str = "clim",
+    agg_mode: str = "median",  # or "mean"
 ):
     """
-    Extracts monthly Tmax values for each fire point based on its acquisition date.
-
-    Parameters
-    ----------
-    fire_csv : str
-        Path to the fire dataset CSV (must contain latitude, longitude, acq_date).
-    raster_dict : dict
-        Dictionary mapping 'MM' (month string) -> raster path (.tif file).
-    lat_col, lon_col, date_col : str
-        Column names in fire CSV.
-    output_path : str, optional
-        Path to save the resulting CSV.
-
-    Returns
-    -------
-    pd.DataFrame
-        Fire dataset with an extra 'value_name' column.
+    Extracts monthly climatology values for each point based on acquisition date.
+    If acq_date is missing, averages (or takes median) of all raster values at that location.
     """
     df = pd.read_csv(fire_csv)
+    df["month"] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%m")
+    df[value_name] = np.nan
 
-    # --- Extract month from acq_date ---
-    df["month"] = pd.to_datetime(df[date_col]).dt.strftime("%m")
-
-    # --- Initialize result column ---
-    df[value_name] = None
-
-    # --- Process month by month ---
+    # ✅ For points with known month
     for month, raster_path in raster_dict.items():
         mask = df["month"] == month
         if not mask.any():
-            continue  # skip months with no fires
+            continue
 
-        sub_df = df[mask]
-        coords = list(zip(sub_df[lon_col], sub_df[lat_col]))
-
+        coords = list(zip(df.loc[mask, lon_col], df.loc[mask, lat_col]))
         with rasterio.open(raster_path) as src:
-            values = [
-                x[0] if x[0] is not None else float("nan") for x in src.sample(coords)
-            ]
-            df.loc[mask, value_name] = values
-
+            nodata = src.nodata
+            values = []
+            for val in tqdm(
+                src.sample(coords), total=len(coords), desc=f"Month {month}"
+            ):
+                v = val[0]
+                if v is None or (nodata is not None and v == nodata):
+                    v = np.nan
+                values.append(v)
+        df.loc[mask, value_name] = values
         print(f"✅ Extracted {value_name} for month {month} ({mask.sum()} points)")
 
-    # --- Clean up ---
+    # ✅ For missing months → average or median over all rasters (pixel-wise per point)
+    missing_mask = df["month"].isna()
+    if missing_mask.any():
+        print(
+            f"ℹ️ Handling {missing_mask.sum()} points with no month — using {agg_mode} of all rasters."
+        )
+        sub_df = df.loc[missing_mask, [lon_col, lat_col]]
+        coords = list(zip(sub_df[lon_col], sub_df[lat_col]))
+
+        all_values = []
+
+        for path in raster_dict.values():
+            with rasterio.open(path) as src:
+                nodata = src.nodata
+                vals = []
+                for val in src.sample(coords):
+                    v = val[0]
+                    if v is None or (nodata is not None and v == nodata):
+                        v = np.nan
+                    vals.append(v)
+                all_values.append(vals)
+
+        stacked = np.stack(all_values, axis=1)
+        if agg_mode == "median":
+            agg_vals = np.nanmedian(stacked, axis=1)
+        else:
+            agg_vals = np.nanmean(stacked, axis=1)
+
+        df.loc[missing_mask, value_name] = agg_vals
+
+    # ✅ Keep only relevant columns
     df = df[[lat_col, lon_col, date_col, value_name]]
 
     if output_path:
