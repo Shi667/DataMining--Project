@@ -6,7 +6,9 @@ from shapely.geometry import Point
 from tqdm import tqdm
 import os
 import glob
-from rasterio.transform import xy
+from rasterio.features import rasterize
+from rasterio.transform import from_origin
+from rasterio.mask import mask
 
 
 def extract_raster_points_in_shape(
@@ -201,10 +203,141 @@ def organize_monthly_climat_files(data_folder_path: str) -> dict:
     return monthly_files
 
 
+def extract_landcover(
+    landcover_path: str,
+    output_csv: str,
+    resolution: float,
+    keep_cols: list = None,
+):
+    """
+    Fast version: rasterizes land cover shapefile instead of heavy spatial join.
+    Produces (longitude, latitude, attributes) grid limited to land polygons.
+    """
+    print("📂 Loading land cover shapefile...")
+    landcover = gpd.read_file(landcover_path).to_crs("EPSG:4326")
+
+    # --- Keep selected columns ---
+    if keep_cols is None:
+        keep_cols = [c for c in landcover.columns if c != "geometry"]
+    main_attr = keep_cols[0]  # assume first column is main landcover class
+
+    # --- Prepare rasterization parameters ---
+    bounds = landcover.total_bounds  # [minx, miny, maxx, maxy]
+    width = int(np.ceil((bounds[2] - bounds[0]) / resolution))
+    height = int(np.ceil((bounds[3] - bounds[1]) / resolution))
+    transform = from_origin(bounds[0], bounds[3], resolution, resolution)
+
+    print(f"🗺️ Rasterizing {len(landcover)} polygons ({width}×{height} grid)...")
+
+    # --- Rasterize main landcover attribute ---
+    shapes = zip(landcover.geometry, landcover[main_attr])
+    raster = rasterize(
+        shapes=shapes,
+        out_shape=(height, width),
+        transform=transform,
+        fill=np.nan,
+        dtype="float32",
+    )
+
+    # --- Convert raster to points ---
+    xs = np.arange(width)
+    ys = np.arange(height)
+    longs, lats, values = [], [], []
+
+    for y in tqdm(ys, desc="Converting raster to points"):
+        for x in xs:
+            val = raster[y, x]
+            if not np.isnan(val):  # keep only valid land pixels
+                lon, lat = transform * (x + 0.5, y + 0.5)
+                longs.append(lon)
+                lats.append(lat)
+                values.append(val)
+
+    # --- Create DataFrame ---
+    df = pd.DataFrame({"longitude": longs, "latitude": lats, main_attr: values})
+
+    # --- Save ---
+    df.to_csv(output_csv, index=False)
+    print(f"✅ Saved {len(df):,} landcover points to {output_csv}")
+
+    return df
 
 
+def extract_soil_in_shape(
+    shapefile_path: str,
+    raster_path: str,
+    soil_attributes_csv: str,
+    output_csv: str,
+    resolution: float,
+    value_name: str = "HWSD2_SMU_ID",
+):
+    """
+    Fast soil extraction limited to ROI.
+    Reads only inside the shapefile region, samples at given resolution.
+    """
+    print("📂 Loading region and raster...")
+    roi = gpd.read_file(shapefile_path)
+    soil_attrs = pd.read_csv(soil_attributes_csv)
+
+    with rasterio.open(raster_path) as src:
+        # Reproject ROI if needed
+        if roi.crs != src.crs:
+            roi = roi.to_crs(src.crs)
+
+        # Mask raster to ROI
+        print("🪣 Clipping raster to region...")
+        out_image, out_transform = mask(src, roi.geometry, crop=True)
+        out_image = out_image[0]
+
+        # Generate coordinate grid inside ROI
+        bounds = roi.total_bounds
+        xs = np.arange(bounds[0], bounds[2], resolution)
+        ys = np.arange(bounds[1], bounds[3], resolution)
+
+        coords = [(x, y) for y in ys for x in xs]
+        values, valid_coords = [], []
+
+        for x, y in tqdm(coords, desc="Sampling soil values"):
+            try:
+                row, col = src.index(x, y)
+                val = out_image[row, col]
+                if not np.isnan(val) and val != src.nodata:
+                    valid_coords.append((x, y))
+                    values.append(val)
+            except Exception:
+                continue
+
+    result_df = pd.DataFrame(valid_coords, columns=["longitude", "latitude"])
+    result_df[value_name] = values
+
+    # Merge with soil attributes
+    merged = result_df.merge(soil_attrs, on=value_name, how="left")
+
+    merged.to_csv(output_csv, index=False)
+    print(f"✅ Saved {len(merged):,} soil points to {output_csv}")
+
+    return merged
 
 
+shapefile_path = "../../../data/shapefiles/combined/alg_tun.shp"
+
+# --- Land cover ---
+extract_landcover(
+    landcover_path="../../../data/land_dataset/combined/alg_tun_landcvr.shp",
+    output_csv="../../../data/features/landcover_grid.csv",
+    resolution=0.03,
+    keep_cols=["GRIDCODE"],
+)
+
+# --- Soil ---
+extract_soil_in_shape(
+    shapefile_path=shapefile_path,
+    raster_path="../../../data/soil_dataset/original/HWSD2_RASTER/HWSD2.bil",
+    soil_attributes_csv="../../../data/soil_dataset/simplified/D1_soil_features_alg_tun.csv",
+    output_csv="../../../data/features/soil_grid.csv",
+    resolution=0.03,
+    value_name="HWSD2_SMU_ID",
+)
 
 """
 # Folder with monthly .tif files
