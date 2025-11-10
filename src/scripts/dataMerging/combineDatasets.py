@@ -184,7 +184,13 @@ def extract_features_monthly_clim(
     """
     Extracts monthly climatology values for each point based on acquisition date.
     If acq_date is missing, averages (or takes median) of all raster values at that location.
+    Then averages duplicates (same lat, lon, date).
     """
+    import pandas as pd
+    import numpy as np
+    import rasterio
+    from tqdm import tqdm
+
     df = pd.read_csv(fire_csv)
     df["month"] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%m")
     df[value_name] = np.nan
@@ -219,7 +225,6 @@ def extract_features_monthly_clim(
         coords = list(zip(sub_df[lon_col], sub_df[lat_col]))
 
         all_values = []
-
         for path in raster_dict.values():
             with rasterio.open(path) as src:
                 nodata = src.nodata
@@ -242,6 +247,12 @@ def extract_features_monthly_clim(
     # ✅ Keep only relevant columns
     df = df[[lat_col, lon_col, date_col, value_name]]
 
+    # ✅ Aggregate duplicates by averaging same (lat, lon, date)
+    df = df.groupby([lat_col, lon_col, date_col], as_index=False).agg(
+        {value_name: "mean"}
+    )
+
+    # ✅ Save final output
     if output_path:
         df.to_csv(output_path, index=False)
         print(f"💾 Saved to {output_path}")
