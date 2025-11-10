@@ -4,6 +4,7 @@ import pandas as pd
 import glob
 import os
 from tqdm import tqdm
+import numpy as np
 
 
 def extract_features_elevation(
@@ -165,12 +166,6 @@ def extract_features_soil(
     return output_ids, merged
 
 
-import rasterio
-import numpy as np
-import pandas as pd
-from tqdm import tqdm
-
-
 def extract_features_monthly_clim(
     fire_csv,
     raster_dict,
@@ -184,12 +179,8 @@ def extract_features_monthly_clim(
     """
     Extracts monthly climatology values for each point based on acquisition date.
     If acq_date is missing, averages (or takes median) of all raster values at that location.
-    Then averages duplicates (same lat, lon, date).
+    Finally averages by (latitude, longitude) → unique grid points.
     """
-    import pandas as pd
-    import numpy as np
-    import rasterio
-    from tqdm import tqdm
 
     df = pd.read_csv(fire_csv)
     df["month"] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%m")
@@ -202,6 +193,7 @@ def extract_features_monthly_clim(
             continue
 
         coords = list(zip(df.loc[mask, lon_col], df.loc[mask, lat_col]))
+
         with rasterio.open(raster_path) as src:
             nodata = src.nodata
             values = []
@@ -212,10 +204,11 @@ def extract_features_monthly_clim(
                 if v is None or (nodata is not None and v == nodata):
                     v = np.nan
                 values.append(v)
+
         df.loc[mask, value_name] = values
         print(f"✅ Extracted {value_name} for month {month} ({mask.sum()} points)")
 
-    # ✅ For missing months → average or median over all rasters (pixel-wise per point)
+    # ✅ For missing months → average or median over all rasters (pixel-wise)
     missing_mask = df["month"].isna()
     if missing_mask.any():
         print(
@@ -244,15 +237,14 @@ def extract_features_monthly_clim(
 
         df.loc[missing_mask, value_name] = agg_vals
 
-    # ✅ Keep only relevant columns
-    df = df[[lat_col, lon_col, date_col, value_name]]
+    # ✅ Final step — aggregate by (lat, lon)
+    #    → Average (or median) temperature for same (lon, lat), regardless of date
+    if agg_mode == "median":
+        df = df.groupby([lat_col, lon_col], as_index=False)[value_name].median()
+    else:
+        df = df.groupby([lat_col, lon_col], as_index=False)[value_name].mean()
 
-    # ✅ Aggregate duplicates by averaging same (lat, lon, date)
-    df = df.groupby([lat_col, lon_col, date_col], as_index=False).agg(
-        {value_name: "mean"}
-    )
-
-    # ✅ Save final output
+    # ✅ Save final result
     if output_path:
         df.to_csv(output_path, index=False)
         print(f"💾 Saved to {output_path}")
