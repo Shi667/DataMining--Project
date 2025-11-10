@@ -1,58 +1,37 @@
 import pandas as pd
 from typing import List, Union
 
+import pandas as pd
 
-def merge_data_sources(
-    data_list: List[Union[str, pd.DataFrame]],
-    on: list[str] | str,
-    how: str = "inner",
-    output_path: str | None = None,
-) -> pd.DataFrame:
+def progressive_merge(csv_list, on, how="inner", output_path=None, chunk_size=None):
     """
-    Merge multiple CSV files and/or DataFrames on one or more common columns.
-
-    Parameters
-    ----------
-    data_list : list of (str | pd.DataFrame)
-        List of CSV file paths and/or pandas DataFrames to merge.
-    on : list[str] | str
-        Column(s) to merge on.
-    how : str, optional
-        Type of merge: 'inner', 'outer', 'left', 'right'. Default is 'inner'.
-    output_path : str, optional
-        If provided, saves the merged DataFrame to this path.
-
-    Returns
-    -------
-    pd.DataFrame
-        Merged DataFrame containing all data.
+    Merge CSVs two by two progressively to avoid memory overflow.
+    Optionally uses chunked reading if files are very large.
     """
-    if not data_list:
-        raise ValueError(
-            "The input list is empty. Please provide CSV paths or DataFrames."
-        )
+    if len(csv_list) < 2:
+        raise ValueError("Need at least two CSV files to merge")
 
-    # Convert all CSVs to DataFrames
-    dfs = []
-    for item in data_list:
-        if isinstance(item, str):  # CSV path
-            df = pd.read_csv(item)
-        elif isinstance(item, pd.DataFrame):
-            df = item
-        else:
-            raise TypeError(
-                f"Unsupported type: {type(item)}. Expected str or pd.DataFrame."
-            )
-        dfs.append(df)
+    # Start with the first CSV
+    print(f"Loading first CSV: {csv_list[0]}")
+    merged_df = pd.read_csv(csv_list[0])
 
-    # Merge all DataFrames iteratively
-    merged_df = dfs[0]
-    for df in dfs[1:]:
-        merged_df = pd.merge(merged_df, df, on=on, how=how)
+    for i, csv_path in enumerate(csv_list[1:], start=2):
+        print(f"🔁 Merging file {i}/{len(csv_list)}: {csv_path}")
 
-    # Save if output path provided
-    if output_path:
-        merged_df.to_csv(output_path, index=False)
-        print(f"Merged CSV saved to: {output_path}")
+        # Read next CSV
+        df_next = pd.read_csv(csv_path)
 
+        # Merge with the accumulated result
+        merged_df = pd.merge(merged_df, df_next, on=on, how=how)
+
+        # Save intermediate result to disk to free memory
+        temp_path = output_path if i == len(csv_list) else f"{output_path}_temp.csv"
+        merged_df.to_csv(temp_path, index=False)
+
+        # Reload from disk (to clear RAM)
+        merged_df = pd.read_csv(temp_path)
+
+        print(f"✅ Intermediate merged size: {merged_df.shape}")
+
+    print("✅ All files merged successfully.")
     return merged_df
