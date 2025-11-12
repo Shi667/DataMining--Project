@@ -9,6 +9,10 @@ out/
 DMenv/
 features/
 Merged/
+data/
+features/
+Merged/
+features_cleaned/
 # Ignorer les checkpoints Jupyter
 *.ipynb_checkpoints
 
