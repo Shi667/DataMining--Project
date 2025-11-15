@@ -89,12 +89,21 @@ def process_fire_data(
     )
 
 
+import pandas as pd
+import numpy as np
+
+
 def treat_sensor_errors_soil(csv_path, output_path):
     df = pd.read_csv(csv_path)
+
+    # Remove TEXTURE_SOTER if present
     if "TEXTURE_SOTER" in df.columns:
         df.drop(columns=["TEXTURE_SOTER"], inplace=True)
+
+    # Replace '-' with NaN
     df = df.replace("-", np.nan)
 
+    # Numeric columns
     numeric_cols = [
         "COARSE",
         "SAND",
@@ -118,47 +127,42 @@ def treat_sensor_errors_soil(csv_path, output_path):
         "ELEC_COND",
     ]
 
+    # Convert to numeric
     df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
 
-    # Detect rows with at least one negative value
+    # Detect negative-value rows
     mask_negative = df[numeric_cols].lt(0).any(axis=1)
 
-    # Calculate counts once for all coordinate pairs
+    # Compute duplicates per coordinate pair
     coord_cols = ["latitude", "longitude"]
-    counts = df.groupby(coord_cols).transform("size")
+    counts = df.groupby(coord_cols)[coord_cols[0]].transform("count")
 
-    # Identify rows to delete (negative AND count > 1)
+    # Rows to delete and fix
     mask_delete = mask_negative & (counts > 1)
-    rows_to_delete_count = mask_delete.sum()
-
-    # Identify rows to fix (negative AND count <= 1)
     mask_fix = mask_negative & (counts <= 1)
+
+    rows_to_delete_count = mask_delete.sum()
     rows_to_fix_count = mask_fix.sum()
 
-    # Delete rows entirely (using the inverse mask)
-    df_clean = df[~mask_delete].copy()
+    # Delete rows with duplicates
+    df_clean = df.loc[~mask_delete].copy()
 
-    # Apply fix: replace negative values with NaN only in rows marked for fix
-    # We use a combined mask for rows to fix and negative values within them
-    negative_values_in_fix_rows = df_clean.index.isin(df[mask_fix].index) & df_clean[
-        numeric_cols
-    ].lt(0)
+    # -------- FIX rows (replace only the negative values with NaN) --------
+    # Only apply fixes to rows that originally had negative values
+    idx_fix = df_clean.index.intersection(df.index[mask_fix])
 
-    df_clean.loc[
-        negative_values_in_fix_rows.index[negative_values_in_fix_rows.any(axis=1)],
-        numeric_cols,
-    ] = df_clean.loc[
-        negative_values_in_fix_rows.index[negative_values_in_fix_rows.any(axis=1)],
-        numeric_cols,
-    ].where(
-        df_clean[numeric_cols] >= 0, np.nan
+    # Replace negatives with NaN in those rows
+    df_clean.loc[idx_fix, numeric_cols] = df_clean.loc[idx_fix, numeric_cols].mask(
+        df_clean.loc[idx_fix, numeric_cols] < 0
     )
+    # ----------------------------------------------------------------------
 
+    # Save cleaned version
     df_clean.to_csv(output_path, index=False)
 
     print("✔ Cleaning complete!")
-    print(f"  Deleted rows : {rows_to_delete_count}")
-    print(f"  Fixed rows   : {rows_to_fix_count}")
+    print(f"  Deleted rows : {rows_to_delete_count}")
+    print(f"  Fixed rows   : {rows_to_fix_count}")
 
 
 def impute_with_geo_zones(
