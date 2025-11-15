@@ -12,6 +12,7 @@ Merged/
 data/
 features/
 Merged/
+Merged/merged.csv
 features_cleaned/
 # Ignorer les checkpoints Jupyter
 *.ipynb_checkpoints
