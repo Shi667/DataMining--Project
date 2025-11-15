@@ -167,87 +167,100 @@ def extract_features_soil(
 
 
 def extract_features_monthly_clim(
-    fire_csv,
+    point_csv,
     raster_dict,
     lat_col="latitude",
     lon_col="longitude",
-    date_col="acq_date",
     output_path=None,
-    value_name: str = "clim",
-    agg_mode: str = "median",  # or "mean"
+    col_name="clim",
+    agg_mode: str = "mean",  # "mean" or "median"
 ):
     """
-    Extracts monthly climatology values for each point based on acquisition date.
-    If acq_date is missing, averages (or takes median) of all raster values at that location.
-    Finally averages by (latitude, longitude) → unique grid points.
+    Extracts seasonal climatology for each point using ALL monthly rasters.
+    Does NOT use fire dates anymore.
+    Returns 4 columns: winter, spring, summer, autumn.
     """
 
-    df = pd.read_csv(fire_csv)
-    df["month"] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%m")
-    df[value_name] = np.nan
+    import pandas as pd
+    import numpy as np
+    import rasterio
+    from tqdm import tqdm
 
-    # ✅ For points with known month
+    # ---------------------------------------------------------
+    # 1) Load coordinates ONLY (no month extraction)
+    # ---------------------------------------------------------
+    df = pd.read_csv(point_csv)
+    coords = list(zip(df[lon_col], df[lat_col]))
+
+    # ---------------------------------------------------------
+    # 2) Sample ALL monthly rasters for each point
+    # ---------------------------------------------------------
+    month_values = {}  # month → list of sampled values
+
     for month, raster_path in raster_dict.items():
-        mask = df["month"] == month
-        if not mask.any():
-            continue
-
-        coords = list(zip(df.loc[mask, lon_col], df.loc[mask, lat_col]))
-
         with rasterio.open(raster_path) as src:
             nodata = src.nodata
-            values = []
+            vals = []
+
             for val in tqdm(
                 src.sample(coords), total=len(coords), desc=f"Month {month}"
             ):
                 v = val[0]
                 if v is None or (nodata is not None and v == nodata):
                     v = np.nan
-                values.append(v)
+                vals.append(v)
 
-        df.loc[mask, value_name] = values
-        print(f"✅ Extracted {value_name} for month {month} ({mask.sum()} points)")
+        month_values[month] = vals  # store month results
 
-    # ✅ For missing months → average or median over all rasters (pixel-wise)
-    missing_mask = df["month"].isna()
-    if missing_mask.any():
-        print(
-            f"ℹ️ Handling {missing_mask.sum()} points with no month — using {agg_mode} of all rasters."
-        )
-        sub_df = df.loc[missing_mask, [lon_col, lat_col]]
-        coords = list(zip(sub_df[lon_col], sub_df[lat_col]))
+    print("✅ Finished sampling all monthly rasters.")
 
-        all_values = []
-        for path in raster_dict.values():
-            with rasterio.open(path) as src:
-                nodata = src.nodata
-                vals = []
-                for val in src.sample(coords):
-                    v = val[0]
-                    if v is None or (nodata is not None and v == nodata):
-                        v = np.nan
-                    vals.append(v)
-                all_values.append(vals)
+    # ---------------------------------------------------------
+    # 3) Add each month as a column in df
+    # ---------------------------------------------------------
+    for m in month_values:
+        df[f"m{m}"] = month_values[m]
 
-        stacked = np.stack(all_values, axis=1)
+    # ---------------------------------------------------------
+    # 4) Define seasons
+    # ---------------------------------------------------------
+    winter = ["12", "01", "02"]
+    spring = ["03", "04", "05"]
+    summer = ["06", "07", "08"]
+    autumn = ["09", "10", "11"]
+
+    # ---------------------------------------------------------
+    # 5) Compute seasonal aggregation
+    # ---------------------------------------------------------
+    def agg(month_list):
+        cols = [f"m{m}" for m in month_list]
         if agg_mode == "median":
-            agg_vals = np.nanmedian(stacked, axis=1)
+            return df[cols].median(axis=1)
         else:
-            agg_vals = np.nanmean(stacked, axis=1)
+            return df[cols].mean(axis=1)
 
-        df.loc[missing_mask, value_name] = agg_vals
+    df[f"winter_{col_name}"] = agg(winter)
+    df[f"spring_{col_name}"] = agg(spring)
+    df[f"summer_{col_name}"] = agg(summer)
+    df[f"autumn_{col_name}"] = agg(autumn)
 
-    # ✅ Final step — aggregate by (lat, lon)
-    #    → Average (or median) temperature for same (lon, lat), regardless of date
-    if agg_mode == "median":
-        df = df.groupby([lat_col, lon_col], as_index=False)[value_name].median()
-    else:
-        df = df.groupby([lat_col, lon_col], as_index=False)[value_name].mean()
+    # Drop monthly columns (optional)
+    df = df[
+        [
+            lat_col,
+            lon_col,
+            f"winter_{col_name}",
+            f"spring_{col_name}",
+            f"summer_{col_name}",
+            f"autumn_{col_name}",
+        ]
+    ]
 
-    # ✅ Save final result
+    # ---------------------------------------------------------
+    # 6) Save result
+    # ---------------------------------------------------------
     if output_path:
         df.to_csv(output_path, index=False)
-        print(f"💾 Saved to {output_path}")
+        print(f"💾 Saved seasonal climatology to {output_path}")
 
     return df
 
