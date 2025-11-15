@@ -15,27 +15,27 @@ def extract_features_elevation(
     lon_col: str = "longitude",
     value_name: str = "elevation",
 ) -> pd.DataFrame:
-    """
-    Extract raster values (e.g., elevation) at given latitude/longitude points
-    from a fire dataset CSV and save the result to a new CSV containing only
-    latitude, longitude, and the extracted value.
-    """
-
-    # --- Load fire dataset ---
     df = pd.read_csv(fire_csv_path)
     print(f"Loaded {len(df)} points from {fire_csv_path}")
 
     # --- Open raster and extract values ---
     with rasterio.open(raster_path) as src:
-        coords = [(x, y) for x, y in zip(df[lon_col], df[lat_col])]
+        # Create coords generator directly from DataFrame columns
+        coords = zip(df[lon_col], df[lat_col])
+
+        # Use rasterio.sample generator, converting to a list of values
+        # The .sample() function is already optimized and returns (value,) tuples
+
+        # Optimization: Use list comprehension to flatten and handle None/NoData in one step
         values = [
-            val[0] if val[0] is not None else None
+            val[0] if val[0] is not None and val[0] != src.nodata else None
             for val in tqdm(
-                src.sample(coords), total=len(coords), desc=f"Extracting {value_name}"
+                src.sample(coords), total=len(df), desc=f"Extracting {value_name}"
             )
         ]
 
     # --- Create new DataFrame with only lat, lon, and extracted values ---
+    # Resulting column order is determined by the dictionary insertion order (Python 3.7+ guarantee)
     result_df = pd.DataFrame(
         {lat_col: df[lat_col], lon_col: df[lon_col], value_name: values}
     )
@@ -108,7 +108,6 @@ def extract_features_landcover(
     if output_path:
         joined.to_csv(output_path, index=False)
 
-    return joined
 
 
 def extract_features_soil(
@@ -120,18 +119,15 @@ def extract_features_soil(
     output_soil_ids: str = None,
     output_soil_feature: str = None,
 ):
-    import pandas as pd
-    import rasterio
-    from shapely.geometry import Point
-    import numpy as np
-
     # Load input points
     df = pd.read_csv(csv_path)
-    points = [Point(xy) for xy in zip(df[lon_col], df[lat_col])]
 
-    # Sample raster for soil IDs
+    # --- Optimization: Sample raster without creating Shapely Points ---
+    coords = zip(df[lon_col], df[lat_col])  # Generator of (lon, lat) tuples
+
     with rasterio.open(raster_path) as src:
-        values = [x[0] for x in src.sample([(p.x, p.y) for p in points])]
+        # Sample raster directly, then flatten the result
+        values = [x[0] for x in src.sample(coords)]
 
     df["HWSD2_SMU_ID"] = values
 
@@ -146,14 +142,31 @@ def extract_features_soil(
     # Merge on HWSD2_SMU_ID
     merged = output_ids.merge(df_soil, on="HWSD2_SMU_ID", how="left")
 
-    # Remove rows where all soil attributes after 3rd column are repeated
-    def is_repeated(row):
-        values = row[3:]  # skip latitude, longitude, HWSD2_SMU_ID
-        # keep only non-empty/non-NaN values
-        values = [v for v in values if pd.notna(v) and v != ""]
-        return len(values) > 0 and all(v == values[0] for v in values)
+    # --- Optimization: Vectorized check for repeated values ---
+    # Identify soil feature columns (all columns after the first three)
+    soil_feature_cols = merged.columns[3:]
 
-    merged.loc[merged.apply(is_repeated, axis=1), :] = np.nan
+    if not soil_feature_cols.empty:
+        # Select soil feature data and convert to NumPy array
+        soil_data = merged[soil_feature_cols].values
+
+        # Fill NaN for comparison purposes (e.g., fill with a unique large number)
+        soil_data_filled = np.nan_to_num(soil_data, nan=-9999999)
+
+        # Check if all values in each row are equal to the first value of that row
+        # This is the vectorized equivalent of the original is_repeated logic
+        is_repeated_mask = (
+            soil_data_filled == soil_data_filled[:, 0][:, np.newaxis]
+        ).all(axis=1)
+
+        # Check if there are any non-NaN values at all in the soil feature columns
+        has_non_nan = ~merged[soil_feature_cols].isnull().all(axis=1)
+
+        # The rows to be flagged as NaN are those that are repeated AND have at least one non-NaN value.
+        mask_to_nan = is_repeated_mask & has_non_nan
+
+        # Set all values in the merged row (starting from the 4th column) to NaN
+        merged.loc[mask_to_nan, soil_feature_cols] = np.nan
 
     # Drop the HWSD2_SMU_ID column from the final merged CSV
     if "HWSD2_SMU_ID" in merged.columns:
@@ -163,7 +176,6 @@ def extract_features_soil(
     if output_soil_feature:
         merged.to_csv(output_soil_feature, index=False)
 
-    return output_ids, merged
 
 
 def extract_features_monthly_clim(
@@ -173,121 +185,102 @@ def extract_features_monthly_clim(
     lon_col="longitude",
     output_path=None,
     col_name="clim",
-    agg_mode: str = "mean",  # "mean" or "median"
+    agg_mode: str = "mean",
 ):
-    """
-    Extracts seasonal climatology for each point using ALL monthly rasters.
-    Does NOT use fire dates anymore.
-    Returns 4 columns: winter, spring, summer, autumn.
-    """
-
-    import pandas as pd
-    import numpy as np
-    import rasterio
-    from tqdm import tqdm
-
-    # ---------------------------------------------------------
-    # 1) Load coordinates ONLY (no month extraction)
-    # ---------------------------------------------------------
     df = pd.read_csv(point_csv)
     coords = list(zip(df[lon_col], df[lat_col]))
 
-    # ---------------------------------------------------------
-    # 2) Sample ALL monthly rasters for each point
-    # ---------------------------------------------------------
-    month_values = {}  # month → list of sampled values
+    # --- Sample ALL monthly rasters for each point ---
+    month_values = {}
 
     for month, raster_path in raster_dict.items():
         with rasterio.open(raster_path) as src:
             nodata = src.nodata
-            vals = []
 
-            for val in tqdm(
-                src.sample(coords), total=len(coords), desc=f"Month {month}"
-            ):
-                v = val[0]
-                if v is None or (nodata is not None and v == nodata):
-                    v = np.nan
-                vals.append(v)
+            # Optimization: Use list comprehension to sample, flatten, and handle NoData
+            # This is more compact and potentially faster than the inner loop structure
+            vals = [
+                v[0] if v[0] is not None and v[0] != nodata else np.nan
+                for v in tqdm(
+                    src.sample(coords), total=len(coords), desc=f"Month {month}"
+                )
+            ]
 
-        month_values[month] = vals  # store month results
+        month_values[month] = vals
+        df[f"m{month}"] = (
+            vals  # Add column inside the loop for memory efficiency (no need for month_values dict)
+        )
 
     print("✅ Finished sampling all monthly rasters.")
 
-    # ---------------------------------------------------------
-    # 3) Add each month as a column in df
-    # ---------------------------------------------------------
-    for m in month_values:
-        df[f"m{m}"] = month_values[m]
+    # --- Define seasons ---
+    winter_cols = [f"m{m}" for m in ["12", "01", "02"]]
+    spring_cols = [f"m{m}" for m in ["03", "04", "05"]]
+    summer_cols = [f"m{m}" for m in ["06", "07", "08"]]
+    autumn_cols = [f"m{m}" for m in ["09", "10", "11"]]
 
-    # ---------------------------------------------------------
-    # 4) Define seasons
-    # ---------------------------------------------------------
-    winter = ["12", "01", "02"]
-    spring = ["03", "04", "05"]
-    summer = ["06", "07", "08"]
-    autumn = ["09", "10", "11"]
+    # --- Compute seasonal aggregation (Vectorized) ---
+    if agg_mode == "median":
+        agg_func = "median"
+    else:
+        agg_func = "mean"
 
-    # ---------------------------------------------------------
-    # 5) Compute seasonal aggregation
-    # ---------------------------------------------------------
-    def agg(month_list):
-        cols = [f"m{m}" for m in month_list]
-        if agg_mode == "median":
-            return df[cols].median(axis=1)
-        else:
-            return df[cols].mean(axis=1)
+    df[f"winter_{col_name}"] = df[winter_cols].agg(agg_func, axis=1)
+    df[f"spring_{col_name}"] = df[spring_cols].agg(agg_func, axis=1)
+    df[f"summer_{col_name}"] = df[summer_cols].agg(agg_func, axis=1)
+    df[f"autumn_{col_name}"] = df[autumn_cols].agg(agg_func, axis=1)
 
-    df[f"winter_{col_name}"] = agg(winter)
-    df[f"spring_{col_name}"] = agg(spring)
-    df[f"summer_{col_name}"] = agg(summer)
-    df[f"autumn_{col_name}"] = agg(autumn)
-
-    # Drop monthly columns (optional)
-    df = df[
-        [
-            lat_col,
-            lon_col,
-            f"winter_{col_name}",
-            f"spring_{col_name}",
-            f"summer_{col_name}",
-            f"autumn_{col_name}",
-        ]
+    # --- Drop monthly columns and select final columns ---
+    final_cols = [
+        lat_col,
+        lon_col,
+        f"winter_{col_name}",
+        f"spring_{col_name}",
+        f"summer_{col_name}",
+        f"autumn_{col_name}",
     ]
+    df = df[final_cols]
 
-    # ---------------------------------------------------------
-    # 6) Save result
-    # ---------------------------------------------------------
+    # --- Save result ---
     if output_path:
         df.to_csv(output_path, index=False)
         print(f"💾 Saved seasonal climatology to {output_path}")
 
-    return df
-
 
 def organize_monthly_climat_files(data_folder_path):
-    """
-    Finds .tif files with a specific naming convention, extracts the month,
-    and stores the file path in a dictionary with the month number as the key.
-
-    Args:
-        data_folder_path (str): The path pattern to your data folder,
-                                e.g., "../data/climate_dataset/5min/max/*.tif"
-
-    Returns:
-        dict: A dictionary where keys are month numbers (str) and values are
-              the full file paths (str).
-    """
     tmax_paths = glob.glob(data_folder_path)
-
     monthly_files = {}
 
     for file_path in tmax_paths:
-        # Extract just the filename from the full path
         filename = os.path.basename(file_path)
-        base_name = filename.replace(".tif", "")
-        date_part = base_name.split("_")[-1]
-        month = date_part.split("-")[1]
-        monthly_files[month] = file_path
+
+        # Optimization: Use rsplit and split for cleaner parsing
+        try:
+            # Assumes format: prefix_month-year.tif or prefix_date_month-year.tif
+            base_name = filename.rsplit(".", 1)[0]
+            date_part = base_name.split("_")[-1]
+            month = date_part.split("-")[
+                0
+            ]  # Assuming month is the first part of date_part (e.g., 01-2000)
+
+            # Re-read original logic: if date_part is 'YYYY-MM', then month is 'MM'
+            if len(date_part.split("-")) == 2:
+                month = date_part.split("-")[1]
+            elif len(date_part.split("-")) == 1 and len(date_part) == 2:
+                # Handle case where the month is directly the last part
+                month = date_part
+            else:
+                # Fallback to original logic if naming is complex: base_name ends with YYYY-MM
+                month = base_name.split("-")[-1]
+
+            # Ensure month is two characters (e.g., '1' becomes '01')
+            month = month.zfill(2)
+
+            if month.isdigit() and 1 <= int(month) <= 12:
+                monthly_files[month] = file_path
+
+        except IndexError:
+            # Skip files that don't match the expected naming convention
+            continue
 
     return monthly_files

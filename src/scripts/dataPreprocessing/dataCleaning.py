@@ -34,7 +34,7 @@ def process_fire_data(
 
     # --- 2. Filter Fire Data by Type ---
     # Delete rows where the type is not the target type
-    fire = fire[fire["type"] == target_type].copy() # <-- FIX IS HERE
+    fire = fire[fire["type"] == target_type].copy()  # <-- FIX IS HERE
     # Check if any fire data remains after filtering
     if fire.empty:
         print(f"⚠️ Warning: No fire detections found for type '{target_type}'.")
@@ -89,26 +89,12 @@ def process_fire_data(
     )
 
 
-
-
 def treat_sensor_errors_soil(csv_path, output_path):
-    """
-    Clean soil dataset by:
-      1. Replacing "-" strings with NaN.
-      2. If a row contains ANY negative numeric values:
-            * delete it if another row exists with same (latitude, longitude)
-            * else replace negative values with NaN
-    Overwrites the original CSV.
-    """
-
-    # Load dataset
     df = pd.read_csv(csv_path)
     if "TEXTURE_SOTER" in df.columns:
         df.drop(columns=["TEXTURE_SOTER"], inplace=True)
-    # Replace "-" with NaN everywhere
     df = df.replace("-", np.nan)
 
-    # Numeric columns to check for negatives
     numeric_cols = [
         "COARSE",
         "SAND",
@@ -132,49 +118,53 @@ def treat_sensor_errors_soil(csv_path, output_path):
         "ELEC_COND",
     ]
 
-    # Convert numeric columns to float (important!)
     df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
 
     # Detect rows with at least one negative value
     mask_negative = df[numeric_cols].lt(0).any(axis=1)
-    bad_rows = df[mask_negative].copy()
 
-    # Count rows per coordinate
-    counts = df.groupby(["latitude", "longitude"]).size()
+    # Calculate counts once for all coordinate pairs
+    coord_cols = ["latitude", "longitude"]
+    counts = df.groupby(coord_cols).transform("size")
 
-    rows_to_delete = []
-    rows_to_fix = []
+    # Identify rows to delete (negative AND count > 1)
+    mask_delete = mask_negative & (counts > 1)
+    rows_to_delete_count = mask_delete.sum()
 
-    # Process each bad row
-    for idx, row in bad_rows.iterrows():
-        lat = row["latitude"]
-        lon = row["longitude"]
+    # Identify rows to fix (negative AND count <= 1)
+    mask_fix = mask_negative & (counts <= 1)
+    rows_to_fix_count = mask_fix.sum()
 
-        if counts.loc[(lat, lon)] > 1:
-            rows_to_delete.append(idx)
-        else:
-            rows_to_fix.append(idx)
+    # Delete rows entirely (using the inverse mask)
+    df_clean = df[~mask_delete].copy()
 
-    # Delete rows entirely
-    df_clean = df.drop(rows_to_delete)
+    # Apply fix: replace negative values with NaN only in rows marked for fix
+    # We use a combined mask for rows to fix and negative values within them
+    negative_values_in_fix_rows = df_clean.index.isin(df[mask_fix].index) & df_clean[
+        numeric_cols
+    ].lt(0)
 
-    # Replace negative values with NaN in rows to fix
-    df_clean.loc[rows_to_fix, numeric_cols] = df_clean.loc[
-        rows_to_fix, numeric_cols
-    ].where(df_clean.loc[rows_to_fix, numeric_cols] >= 0, np.nan)
+    df_clean.loc[
+        negative_values_in_fix_rows.index[negative_values_in_fix_rows.any(axis=1)],
+        numeric_cols,
+    ] = df_clean.loc[
+        negative_values_in_fix_rows.index[negative_values_in_fix_rows.any(axis=1)],
+        numeric_cols,
+    ].where(
+        df_clean[numeric_cols] >= 0, np.nan
+    )
 
-    # Overwrite original CSV
     df_clean.to_csv(output_path, index=False)
 
     print("✔ Cleaning complete!")
-    print(f"  Deleted rows : {len(rows_to_delete)}")
-    print(f"  Fixed rows   : {len(rows_to_fix)}")
+    print(f"  Deleted rows : {rows_to_delete_count}")
+    print(f"  Fixed rows   : {rows_to_fix_count}")
 
 
 def impute_with_geo_zones(
     input_csv,
-    num_cols=None,  # list of numeric columns
-    cat_cols=None,  # list of categorical columns
+    num_cols=None,
+    cat_cols=None,
     lat_col="latitude",
     lon_col="longitude",
     base_res=0.1,
@@ -183,8 +173,6 @@ def impute_with_geo_zones(
     output_path="./dataCleaned.csv",
 ):
     df = pd.read_csv(input_csv)
-
-    # Default empty lists if not provided
     num_cols = num_cols or []
     cat_cols = cat_cols or []
 
@@ -193,68 +181,66 @@ def impute_with_geo_zones(
     print("Missing values (percent) per column :")
     print(missing_percent[missing_percent > 0])
 
-    def get_zone_df(lat, lon, res):
-        lat_min, lat_max = lat - res, lat + res
-        lon_min, lon_max = lon - res, lon + res
-        return df[
-            (df[lat_col] >= lat_min)
-            & (df[lat_col] <= lat_max)
-            & (df[lon_col] >= lon_min)
-            & (df[lon_col] <= lon_max)
-        ]
+    def impute_value(row, col, is_num, max_res):
+        lat, lon = row[lat_col], row[lon_col]
+        resolution = base_res
+
+        while resolution <= max_res:
+            lat_min, lat_max = lat - resolution, lat + resolution
+            lon_min, lon_max = lon - resolution, lon + resolution
+
+            # Vectorized filtering for the zone
+            zone_df = df[
+                (df[lat_col] >= lat_min)
+                & (df[lat_col] <= lat_max)
+                & (df[lon_col] >= lon_min)
+                & (df[lon_col] <= lon_max)
+            ]
+
+            # Check the number of non-missing values in the target column
+            valid_count = zone_df[col].count()
+
+            if valid_count >= min_points:
+                break
+            resolution *= 1.5
+
+        if valid_count == 0:  # Fallback to global
+            return df[col].median() if is_num else df[col].mode(dropna=True).iat[0]
+
+        if is_num:
+            return zone_df[col].median()
+        else:
+            mode_val = zone_df[col].mode(dropna=True)
+            return (
+                mode_val.iat[0]
+                if not mode_val.empty
+                else df[col].mode(dropna=True).iat[0]
+            )
 
     # --- 2. Process each column ---
     for col in df.columns:
-
-        # Ignore latitude/longitude and columns with no missing
-        if col in [lat_col, lon_col]:
-            continue
-        if missing_percent.get(col, 0) == 0:
+        if col in [lat_col, lon_col] or missing_percent.get(col, 0) == 0:
             continue
 
         print(f"\n=== Imputing column: {col} ===")
 
-        # --- Decide column type ---
-        if col in num_cols:
-            is_num = True
-        elif col in cat_cols:
-            is_num = False
-        else:
-            # fallback: detect automatically
-            is_num = pd.api.types.is_numeric_dtype(df[col])
+        is_num = col in num_cols or (
+            col not in cat_cols and pd.api.types.is_numeric_dtype(df[col])
+        )
 
-        for idx, row in df[df[col].isnull()].iterrows():
-            lat, lon = row[lat_col], row[lon_col]
-            resolution = base_res
+        # Select only the rows where the column is missing
+        missing_rows = df[df[col].isnull()].copy()
 
-            # Try expanding zone
-            while resolution <= max_res:
-                zone_df = get_zone_df(lat, lon, resolution)
-                if len(zone_df) >= min_points:
-                    break
-                resolution *= 1.5
+        # Apply the imputation function to the missing rows
+        imputed_values = missing_rows.apply(
+            lambda row: impute_value(row, col, is_num, max_res), axis=1
+        )
 
-            # If zone empty → fallback global
-            if len(zone_df) == 0:
-                if is_num:
-                    df.at[idx, col] = df[col].median()
-                else:
-                    df.at[idx, col] = df[col].mode(dropna=True).iat[0]
-                continue
-
-            # Numerical
-            if is_num:
-                df.at[idx, col] = zone_df[col].median()
-            # Categorical
-            else:
-                mode_val = zone_df[col].mode(dropna=True)
-                if not mode_val.empty:
-                    df.at[idx, col] = mode_val.iat[0]
-                else:
-                    df.at[idx, col] = df[col].mode(dropna=True).iat[0]
+        # Assign the calculated values back to the original DataFrame
+        df.loc[imputed_values.index, col] = imputed_values
 
         print(f"{col}: imputation done using geo-zones.")
 
-        if output_path:
-            df.to_csv(output_path, index=False)
-            print(f"💾 Saved imputation to {output_path}")
+    if output_path:
+        df.to_csv(output_path, index=False)
+        print(f"💾 Saved imputation to {output_path}")
