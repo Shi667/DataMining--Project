@@ -56,15 +56,24 @@ def reduce_features(
     keep_var = variances[variances > var_threshold].index
     X = X[keep_var]
 
-    # --- 2. Remove high correlation features
+    # --- 2. Remove highly correlated features smartly
     corr_matrix = X.corr().abs()
-    to_drop = set()
 
-    for col in corr_matrix.columns:
-        for col2 in corr_matrix.columns:
-            if col != col2 and corr_matrix.loc[col, col2] > corr_threshold:
-                # drop the second feature in the pair
-                to_drop.add(col2)
+    # correlation of each feature with the target
+    target_corr = df[X.columns].corrwith(y).abs()
+
+    to_drop = set()
+    cols = list(corr_matrix.columns)
+
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            col1, col2 = cols[i], cols[j]
+            if corr_matrix.loc[col1, col2] > corr_threshold:
+                # drop the one LESS correlated with the label
+                if target_corr[col1] >= target_corr[col2]:
+                    to_drop.add(col2)
+                else:
+                    to_drop.add(col1)
 
     X = X.drop(columns=list(to_drop), errors="ignore")
 

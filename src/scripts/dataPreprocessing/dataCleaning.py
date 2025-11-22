@@ -89,10 +89,6 @@ def process_fire_data(
     )
 
 
-import pandas as pd
-import numpy as np
-
-
 def treat_sensor_errors_soil(csv_path, output_path):
     df = pd.read_csv(csv_path)
 
@@ -209,6 +205,7 @@ def impute_with_geo_zones(
             resolution *= 1.5
 
         if valid_count == 0:  # Fallback to global
+            print("Fallback to global , valid_count=0")
             return df[col].median() if is_num else df[col].mode(dropna=True).iat[0]
 
         if is_num:
