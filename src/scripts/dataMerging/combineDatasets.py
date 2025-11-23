@@ -109,7 +109,6 @@ def extract_features_landcover(
         joined.to_csv(output_path, index=False)
 
 
-
 def extract_features_soil(
     csv_path,
     raster_path,
@@ -177,110 +176,145 @@ def extract_features_soil(
         merged.to_csv(output_soil_feature, index=False)
 
 
+import pandas as pd
+import numpy as np
+import rasterio
+from tqdm import tqdm
 
-def extract_features_monthly_clim(
-    point_csv,
-    raster_dict,
+
+def extract_features_yearly_monthly_clim(
+    point_csv: str,
+    fire_csv: str,
+    raster_dict: dict,  # keys: "YYYY-MM"
     lat_col="latitude",
     lon_col="longitude",
+    fire_year_col="year",
     output_path=None,
     col_name="clim",
-    agg_mode: str = "mean",
+    agg_mode="median",
 ):
-    df = pd.read_csv(point_csv)
-    coords = list(zip(df[lon_col], df[lat_col]))
+    """
+    Extract seasonal climate for each point using the YEAR found in fire_csv.
+    raster_dict contains paths keyed by 'YYYY-MM'.
+    """
 
-    # --- Sample ALL monthly rasters for each point ---
-    month_values = {}
+    # --- Load datasets ---
+    df_points = pd.read_csv(point_csv)
+    df_fire = pd.read_csv(fire_csv)
 
-    for month, raster_path in raster_dict.items():
-        with rasterio.open(raster_path) as src:
-            nodata = src.nodata
+    # Must have same length & matching rows
+    assert len(df_points) == len(
+        df_fire
+    ), "point_csv and fire_csv must align row-by-row"
 
-            # Optimization: Use list comprehension to sample, flatten, and handle NoData
-            # This is more compact and potentially faster than the inner loop structure
-            vals = [
-                v[0] if v[0] is not None and v[0] != nodata else np.nan
-                for v in tqdm(
-                    src.sample(coords), total=len(coords), desc=f"Month {month}"
-                )
-            ]
+    # Attach the fire year to points
+    df_points["year"] = df_fire[fire_year_col].astype(int)
 
-        month_values[month] = vals
-        df[f"m{month}"] = (
-            vals  # Add column inside the loop for memory efficiency (no need for month_values dict)
-        )
+    # Prepare columns for 12 months
+    for mm in range(1, 13):
+        df_points[f"m{mm:02d}"] = np.nan
 
-    print("✅ Finished sampling all monthly rasters.")
+    # --- SAMPLE MONTH-BY-MONTH BUT YEAR PER POINT ---
+    for mm in range(1, 13):
+        month_str = f"{mm:02d}"
+
+        print(f"\n📅 Processing month {month_str} ...")
+
+        # For each YEAR appearing in data
+        for year in df_points["year"].unique():
+            key = f"{year}-{month_str}"
+
+            if key not in raster_dict:
+                print(f"⚠️ Missing raster for {key}, skipping.")
+                continue
+
+            raster_path = raster_dict[key]
+            subset_idx = df_points[df_points["year"] == year].index
+            subset = df_points.loc[subset_idx]
+
+            coords = list(zip(subset[lon_col], subset[lat_col]))
+
+            with rasterio.open(raster_path) as src:
+                nodata = src.nodata
+                sampled_vals = [
+                    v[0] if v[0] is not None and v[0] != nodata else np.nan
+                    for v in src.sample(coords)
+                ]
+
+            df_points.loc[subset_idx, f"m{month_str}"] = sampled_vals
+
+    print("\n✅ Finished sampling all monthly rasters per YEAR.")
 
     # --- Define seasons ---
-    winter_cols = [f"m{m}" for m in ["12", "01", "02"]]
-    spring_cols = [f"m{m}" for m in ["03", "04", "05"]]
-    summer_cols = [f"m{m}" for m in ["06", "07", "08"]]
-    autumn_cols = [f"m{m}" for m in ["09", "10", "11"]]
+    winter_cols = ["m12", "m01", "m02"]
+    spring_cols = ["m03", "m04", "m05"]
+    summer_cols = ["m06", "m07", "m08"]
+    autumn_cols = ["m09", "m10", "m11"]
 
-    # --- Compute seasonal aggregation (Vectorized) ---
-    if agg_mode == "median":
-        agg_func = "median"
-    else:
-        agg_func = "mean"
+    agg_func = "median" if agg_mode == "median" else "mean"
 
-    df[f"winter_{col_name}"] = df[winter_cols].agg(agg_func, axis=1)
-    df[f"spring_{col_name}"] = df[spring_cols].agg(agg_func, axis=1)
-    df[f"summer_{col_name}"] = df[summer_cols].agg(agg_func, axis=1)
-    df[f"autumn_{col_name}"] = df[autumn_cols].agg(agg_func, axis=1)
+    # --- Seasonal aggregation ---
+    df_points[f"winter_{col_name}"] = df_points[winter_cols].agg(agg_func, axis=1)
+    df_points[f"spring_{col_name}"] = df_points[spring_cols].agg(agg_func, axis=1)
+    df_points[f"summer_{col_name}"] = df_points[summer_cols].agg(agg_func, axis=1)
+    df_points[f"autumn_{col_name}"] = df_points[autumn_cols].agg(agg_func, axis=1)
 
-    # --- Drop monthly columns and select final columns ---
+    # Output columns
     final_cols = [
         lat_col,
         lon_col,
+        "year",
         f"winter_{col_name}",
         f"spring_{col_name}",
         f"summer_{col_name}",
         f"autumn_{col_name}",
     ]
-    df = df[final_cols]
+    final_df = df_points[final_cols]
 
-    # --- Save result ---
     if output_path:
-        df.to_csv(output_path, index=False)
-        print(f"💾 Saved seasonal climatology to {output_path}")
+        final_df.to_csv(output_path, index=False)
+        print(f"\n💾 Saved seasonal climatology to {output_path}")
+
+    return final_df
 
 
-def organize_monthly_climat_files(data_folder_path):
+def organize_climat_files(data_folder_path):
     tmax_paths = glob.glob(data_folder_path)
+    # Change the dictionary to store files keyed by 'YYYY-MM'
     monthly_files = {}
 
     for file_path in tmax_paths:
         filename = os.path.basename(file_path)
 
-        # Optimization: Use rsplit and split for cleaner parsing
         try:
-            # Assumes format: prefix_month-year.tif or prefix_date_month-year.tif
+            # 1. Strip the file extension (.tif)
             base_name = filename.rsplit(".", 1)[0]
-            date_part = base_name.split("_")[-1]
-            month = date_part.split("-")[
-                0
-            ]  # Assuming month is the first part of date_part (e.g., 01-2000)
 
-            # Re-read original logic: if date_part is 'YYYY-MM', then month is 'MM'
-            if len(date_part.split("-")) == 2:
-                month = date_part.split("-")[1]
-            elif len(date_part.split("-")) == 1 and len(date_part) == 2:
-                # Handle case where the month is directly the last part
-                month = date_part
-            else:
-                # Fallback to original logic if naming is complex: base_name ends with YYYY-MM
-                month = base_name.split("-")[-1]
+            # 2. Split by '_' and get the second-to-last part which is the date (e.g., '2020-02')
+            # Assuming the format is: prefix_datepart_YYYY-MM.tif
+            # The example file: 'wc2.1_cruts4.09_5m_prec_2020-02.tif'
+            parts = base_name.split("_")
+            date_part = parts[-1]  # This should be '2020-02'
 
-            # Ensure month is two characters (e.g., '1' becomes '01')
-            month = month.zfill(2)
+            # 3. Split the date_part (YYYY-MM) into year and month
+            year, month = date_part.split("-")
 
-            if month.isdigit() and 1 <= int(month) <= 12:
-                monthly_files[month] = file_path
+            # The new key will be a combination of year and month (e.g., '2020-02')
+            file_key = f"{year}-{month}"
 
-        except IndexError:
-            # Skip files that don't match the expected naming convention
+            # Basic validation check:
+            # Check if year is 4 digits and month is 2 digits and they are numeric
+            if (
+                len(year) == 4
+                and year.isdigit()
+                and len(month) == 2
+                and month.isdigit()
+            ):
+                # Store the file path using the 'YYYY-MM' key
+                monthly_files[file_key] = file_path
+
+        except (IndexError, ValueError):
+            # Skip files that don't match the expected naming convention (e.g., not enough parts or no '-')
             continue
 
     return monthly_files

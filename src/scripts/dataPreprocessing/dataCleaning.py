@@ -8,66 +8,46 @@ import numpy as np
 def process_fire_data(
     grid_path: str,
     fire_path: str,
-    target_type: int,  # Assuming common fire sensor types, adjust if needed
+    target_type: int,
     output_file: str,
+    no_fire_year: int = 2024,  # default year when no fire
 ):
     """
-    Processes fire detection data: filters by a specified type, snaps detections
-    to the nearest grid point, creates a binary fire indicator, handles duplicates,
-    and merges the result with the full grid.
-
-    Args:
-        grid_path: Path to the CSV file containing grid points (columns: latitude, longitude).
-        fire_path: Path to the CSV file containing fire detections
-                   (must contain 'latitude', 'longitude', and the fire type column).
-        fire_type_col: The name of the column in the fire data that specifies the type/sensor.
-        target_type: The specific value in the fire_type_col to filter for (e.g., 'VIIRS').
-
-    Returns:
-        A DataFrame containing all grid points (latitude, longitude) with a
-        'fire' column (1 if fire detected, 0 otherwise).
+    Processes fire detection data and attaches the fire year to the grid.
+    Non-fire grid cells are assigned a default year (2024).
     """
 
     # --- 1. Load Data ---
     grid = pd.read_csv(grid_path)
     fire = pd.read_csv(fire_path)
 
-    # --- 2. Filter Fire Data by Type ---
-    # Delete rows where the type is not the target type
-    fire = fire[fire["type"] == target_type].copy()  # <-- FIX IS HERE
-    # Check if any fire data remains after filtering
+    # --- 2. Filter Fire Data by Sensor Type ---
+    fire = fire[fire["type"] == target_type].copy()
     if fire.empty:
         print(f"⚠️ Warning: No fire detections found for type '{target_type}'.")
-        # Proceed with an empty 'fire' column which will become 0s after merging.
 
-    # --- 3. KDTree Matching (Snap to Nearest Grid Cell) ---
+    # --- 3. KDTree Matching (Snap Fire Points to Nearest Grid Point) ---
     grid_coords = np.vstack((grid["latitude"], grid["longitude"])).T
     fire_coords = np.vstack((fire["latitude"], fire["longitude"])).T
 
     tree = cKDTree(grid_coords)
-    # The tree.query operation can be slow if 'fire' is very large, but is necessary for snapping.
     distances, indices = tree.query(fire_coords, k=1)
 
-    # Snap each fire point to its nearest grid cell's coordinates
+    # Assign snapped coordinates
     fire["grid_lat"] = grid.iloc[indices]["latitude"].values
     fire["grid_lon"] = grid.iloc[indices]["longitude"].values
 
-    # --- 4. Prepare Snapped Data (Binary Fire Indicator & Deduplication) ---
+    # --- 4. Keep Year + Deduplicate ---
+    fire["fire"] = 1  # binary indicator
 
-    # Create a binary fire indicator (1 for every snapped detection)
-    fire["fire"] = 1
+    # Keep the year of the fire!
+    snapped = fire[["grid_lat", "grid_lon", "fire", "year"]].copy()
 
-    # Keep only the snapped coordinates and the new 'fire' indicator
-    snapped = fire[["grid_lat", "grid_lon", "fire"]].copy()
-
-    # Delete duplicated grid (lat, lon) pairs, keeping the first (which all have fire=1)
-    # This ensures each unique grid cell has at most one fire entry.
+    # If multiple fires snap to the same grid → keep the earliest fire year
+    snapped.sort_values(by="year", inplace=True)
     snapped.drop_duplicates(subset=["grid_lat", "grid_lon"], keep="first", inplace=True)
 
-    # --- 5. Merge with Grid and Finalize ---
-
-    # Merge with grid to include all grid cells.
-    # 'left' ensures all grid cells are present.
+    # --- 5. Merge With Grid ---
     merged = pd.merge(
         grid,
         snapped,
@@ -76,16 +56,19 @@ def process_fire_data(
         how="left",
     )
 
-    # Fill NaN values in the 'fire' column with 0 (no fire detected at this grid cell)
-    # The 'fire' column now contains 1 or 0, as requested.
+    # Binary fire indicator: NaN → 0
     merged["fire"] = merged["fire"].fillna(0).astype(int)
 
-    # Keep only the desired final columns: (latitude, longitude, fire)
-    merged = merged[["latitude", "longitude", "fire"]]
+    # Assign year
+    merged["year"] = merged["year"].fillna(no_fire_year).astype(int)
+
+    # Final clean dataset
+    merged = merged[["latitude", "longitude", "fire", "year"]]
 
     merged.to_csv(output_file, index=False)
+
     print(
-        f"✅ Saved {merged.shape} grid points with binary fire data (1/0) to {output_file}"
+        f"✅ Saved {merged.shape[0]} grid points with fire + year info to {output_file}"
     )
 
 
@@ -245,3 +228,66 @@ def impute_with_geo_zones(
     if output_path:
         df.to_csv(output_path, index=False)
         print(f"💾 Saved imputation to {output_path}")
+
+
+def duplicate_analysis(
+    csv_path: str,
+    ignore_columns=None,  # list of columns NOT to consider when checking duplicates
+    delete_duplicates=False,  # whether to drop duplicates
+    output_clean_path=None,  # where to save cleaned CSV
+):
+    """
+    Analyze duplicate rows in a CSV with optional column exclusion and deletion.
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to the CSV file.
+    ignore_columns : list[str], optional
+        Columns to ignore when detecting duplicates.
+    delete_duplicates : bool
+        If True, removes duplicates and saves cleaned CSV.
+    output_clean_path : str
+        Path to save cleaned CSV when delete_duplicates=True.
+
+    Returns
+    -------
+    dict
+        {
+            "total_rows": int,
+            "duplicate_rows": int,
+            "duplicate_percentage": float,
+            "duplicated_sample": pd.DataFrame
+        }
+    """
+
+    df = pd.read_csv(csv_path)
+
+    # Handle ignore_columns
+    if ignore_columns:
+        cols_to_check = [col for col in df.columns if col not in ignore_columns]
+    else:
+        cols_to_check = df.columns.tolist()
+
+    # Detect duplicates
+    duplicated_mask = df.duplicated(subset=cols_to_check, keep=False)
+    duplicate_rows = df[duplicated_mask]
+
+    stats = {
+        "total_rows": len(df),
+        "duplicate_rows": len(duplicate_rows),
+        "duplicate_percentage": round((len(duplicate_rows) / len(df)) * 100, 3),
+        "duplicated_sample": duplicate_rows.head(10),
+    }
+
+    # Optionally delete duplicates
+    if delete_duplicates:
+        if output_clean_path is None:
+            raise ValueError(
+                "output_clean_path must be provided when delete_duplicates=True"
+            )
+
+        df_clean = df.drop_duplicates(subset=cols_to_check, keep="first")
+        df_clean.to_csv(output_clean_path, index=False)
+
+    return stats
