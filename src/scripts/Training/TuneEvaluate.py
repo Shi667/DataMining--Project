@@ -2,7 +2,7 @@ from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
     ParameterGrid,
-    cross_val_score,
+    cross_validate,
 )
 from sklearn.metrics import (
     accuracy_score,
@@ -12,104 +12,61 @@ from sklearn.metrics import (
     roc_auc_score,
     confusion_matrix,
     classification_report,
-    make_scorer,
 )
 import numpy as np
 
 
 # ============================================================
-# Custom GridSearch with LIVE CV METRICS PRINTING
+# Optimized GridSearch with FAST CV metrics printing
 # ============================================================
 class LiveVerboseGridSearch(GridSearchCV):
 
     def _run_search(self, evaluate_candidates):
-        """Print each parameter combination + CV metrics before fitting."""
+        """Print each parameter combination using ONE cross_validate per combo."""
         param_sets = list(ParameterGrid(self.param_grid))
         print(f"\n=== Total combinations: {len(param_sets)} ===")
+
+        scoring = {
+            "recall": "recall",
+            "precision": "precision",
+            "accuracy": "accuracy",
+            "f1": "f1",
+            "roc_auc": "roc_auc",
+        }
 
         for i, params in enumerate(param_sets, start=1):
             print(f"\n🔧 Running combination {i}/{len(param_sets)}")
             print("Params:", params)
             print("-----------------------------------")
 
-            # ============================================================
-            # Compute cross-validation metrics manually
-            # ============================================================
             estimator = self.estimator.set_params(**params)
-            cv = self.cv
+
+            # ---------- FAST CROSS VALIDATION ----------
+            cv_results = cross_validate(
+                estimator,
+                self.X_train_cv,
+                self.y_train_cv,
+                cv=self.cv,
+                scoring=scoring,
+                n_jobs=self.n_jobs,
+                return_train_score=False,
+            )
 
             print("📌 Cross-validation metrics:")
+            for metric in ["accuracy", "precision", "recall", "f1"]:
+                scores = cv_results[f"test_{metric}"]
+                print(f"   • {metric}: {scores.mean():.4f} ± {scores.std():.4f}")
 
-            # Recall (main scoring)
-            recall_scores = cross_val_score(
-                estimator,
-                self.X_train_cv,
-                self.y_train_cv,
-                cv=cv,
-                scoring="recall",
-                n_jobs=self.n_jobs,
-            )
-            print(
-                f"   • Recall:    {np.mean(recall_scores):.4f}  ± {np.std(recall_scores):.4f}"
-            )
-
-            # Accuracy
-            acc_scores = cross_val_score(
-                estimator,
-                self.X_train_cv,
-                self.y_train_cv,
-                cv=cv,
-                scoring="accuracy",
-                n_jobs=self.n_jobs,
-            )
-            print(
-                f"   • Accuracy:  {np.mean(acc_scores):.4f}  ± {np.std(acc_scores):.4f}"
-            )
-
-            # Precision
-            precision_scores = cross_val_score(
-                estimator,
-                self.X_train_cv,
-                self.y_train_cv,
-                cv=cv,
-                scoring="precision",
-                n_jobs=self.n_jobs,
-            )
-            print(
-                f"   • Precision: {np.mean(precision_scores):.4f}  ± {np.std(precision_scores):.4f}"
-            )
-
-            # F1
-            f1_scores = cross_val_score(
-                estimator,
-                self.X_train_cv,
-                self.y_train_cv,
-                cv=cv,
-                scoring="f1",
-                n_jobs=self.n_jobs,
-            )
-            print(
-                f"   • F1-score:  {np.mean(f1_scores):.4f}  ± {np.std(f1_scores):.4f}"
-            )
-
-            # ROC AUC (if classifier supports predict_proba)
-            try:
-                roc_scores = cross_val_score(
-                    estimator,
-                    self.X_train_cv,
-                    self.y_train_cv,
-                    cv=cv,
-                    scoring="roc_auc",
-                    n_jobs=self.n_jobs,
-                )
-                print(
-                    f"   • ROC AUC:   {np.mean(roc_scores):.4f}  ± {np.std(roc_scores):.4f}"
-                )
-            except:
-                print("   • ROC AUC:   Not available (no predict_proba)")
+            # ROC AUC (may fail for models without predict_proba)
+            if "test_roc_auc" in cv_results:
+                scores = cv_results["test_roc_auc"]
+                print(f"   • roc_auc: {scores.mean():.4f} ± {scores.std():.4f}")
+            else:
+                print("   • roc_auc: Not available")
 
             print("-----------------------------------")
 
+            # Now let GridSearchCV evaluate this param set normally
             evaluate_candidates([params])
 
 
@@ -119,27 +76,27 @@ class LiveVerboseGridSearch(GridSearchCV):
 def tune_and_evaluate(
     balanced_train_df,
     test_df,
-    estimator,  # algorithm passed as parameter
-    param_grid,  # param grid passed as parameter
+    estimator,
+    param_grid,
     target_col="fire",
     cv_folds=5,
     random_state=42,
     scoring="recall",
 ):
-    # ==========  Split data  ==========
+    # ---------- Split data ----------
     X_train = balanced_train_df.drop(columns=[target_col])
     y_train = balanced_train_df[target_col].astype(int)
     X_test = test_df.drop(columns=[target_col])
     y_test = test_df[target_col].astype(int)
 
-    # Save train for manual CV metrics
+    # Store training data for the custom grid class
     LiveVerboseGridSearch.X_train_cv = X_train
     LiveVerboseGridSearch.y_train_cv = y_train
 
-    # ==========  CV strategy  ==========
+    # ---------- CV strategy ----------
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
 
-    # ==========  Grid Search  ==========
+    # ---------- Grid Search ----------
     grid = LiveVerboseGridSearch(
         estimator=estimator,
         param_grid=param_grid,
@@ -157,9 +114,8 @@ def tune_and_evaluate(
     print("\n🏆 Best parameters:", grid.best_params_)
     print(f"🏆 Best CV {scoring}: {grid.best_score_:.4f}\n")
 
-    # ==========  Test Set Evaluation  ==========
+    # ---------- Test Evaluation ----------
     y_pred = grid.best_estimator_.predict(X_test)
-
     try:
         y_proba = grid.best_estimator_.predict_proba(X_test)[:, 1]
     except:
@@ -179,7 +135,6 @@ def tune_and_evaluate(
     for k, v in test_metrics.items():
         if k not in ["confusion_matrix", "classification_report", "roc_auc"]:
             print(f"{k}: {v:.4f}")
-
     if test_metrics["roc_auc"] is not None:
         print(f"roc_auc: {test_metrics['roc_auc']:.4f}")
 

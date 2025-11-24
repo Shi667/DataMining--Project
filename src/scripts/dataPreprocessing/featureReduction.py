@@ -40,7 +40,7 @@ def reduce_features(
     target_col="fire",
     var_threshold=0.01,
     corr_threshold=0.9,
-    importance_method="MI",  # "MI" or "RF"
+    importance_method="RF",  # "MI" or "RF"
     top_k=20,  # number of best features to keep
 ):
     df = pd.read_csv(csv_path)
