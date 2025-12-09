@@ -4,6 +4,10 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.cluster import AgglomerativeClustering
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense
 
 
 def analyze_correlation_variance(csv_path, target_col="fire", corr_threshold=0.9):
@@ -37,7 +41,7 @@ def analyze_correlation_variance(csv_path, target_col="fire", corr_threshold=0.9
     }
 
 
-def reduce_features(
+def supervised_feature_reduction(
     csv_path,
     output_path="reduced_dataset.csv",
     target_col="fire",
@@ -110,61 +114,33 @@ def unsupervised_feature_reduction(
     csv_path,
     output_path="reduced_dataset.csv",
     var_threshold=0.01,
-    corr_threshold=0.95,
-    cluster_distance=0.2,
+    cluster_distance=0.3,
+    use_autoencoder=False,
+    n_ae_features=10,
+    ae_epochs=50,
+    percentage_data=1,  # example: 30% of data
 ):
-    """
-    csv_path
-    output_path
-    var_threshold: threshold for low variance removal
-    corr_threshold: threshold for correlation-based elimination
-    cluster_distance: distance threshold for agglomerative clustering (0-1)
-    """
     df = pd.read_csv(csv_path)
-    print("Initial number of features:", df.shape[1])
+
+    if "fire" in df.columns:
+        df = df.drop(columns=["fire"])
+    df = df.sample(frac=percentage_data, random_state=42)
+    print(f"Initial features: {df.shape[1]}")
 
     # ------------------------------------------------------------
     # 1️⃣ Remove Low-variance features
     # ------------------------------------------------------------
     selector = VarianceThreshold(threshold=var_threshold)
     selector.fit(df)
-
-    low_var_mask = selector.get_support()
-    df = df.loc[:, low_var_mask]
-
-    print("After low-variance filter:", df.shape[1])
+    df = df.loc[:, selector.get_support()]
+    print(f"After Variance Filter: {df.shape[1]}")
 
     # ------------------------------------------------------------
-    # 2️⃣ Remove Highly Correlated Features
-    #     Keep the one with highest variance
+    # 2️⃣ Feature Clustering
     # ------------------------------------------------------------
     corr_matrix = df.corr().abs()
-    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
-    to_drop_corr = set()
-    for col in upper.columns:
-        high_corr = upper[col][upper[col] > corr_threshold].index
-
-        for other in high_corr:
-            # Compare variance of col vs other
-            if df[col].var() >= df[other].var():
-                to_drop_corr.add(other)
-            else:
-                to_drop_corr.add(col)
-
-    df = df.drop(columns=list(to_drop_corr))
-    print("After correlation filter:", df.shape[1])
-
-    # ------------------------------------------------------------
-    # 3️⃣ Feature Clustering (redundancy reduction)
-    # ------------------------------------------------------------
-    # Recompute correlation matrix after previous reductions
-    corr_matrix = df.corr().abs()
-
-    # Convert correlation to distance
     distance_matrix = 1 - corr_matrix
 
-    # Clustering features based on similarity
     clustering = AgglomerativeClustering(
         n_clusters=None,
         metric="precomputed",
@@ -172,20 +148,88 @@ def unsupervised_feature_reduction(
         distance_threshold=cluster_distance,
         compute_distances=True,
     )
-
     clustering.fit(distance_matrix)
-
     cluster_labels = clustering.labels_
 
-    # Select 1 representative feature per cluster (highest variance)
     selected_features = []
     for cluster_id in np.unique(cluster_labels):
         cluster_features = df.columns[cluster_labels == cluster_id]
-
-        # choose feature with highest variance
-        best_feature = df[cluster_features].var().idxmax()
-        selected_features.append(best_feature)
+        if len(cluster_features) == 1:
+            selected_features.append(cluster_features[0])
+        else:
+            cluster_corr = corr_matrix.loc[cluster_features, cluster_features]
+            best_feature = cluster_corr.sum().idxmax()
+            selected_features.append(best_feature)
 
     df = df[selected_features]
-    print("After feature clustering:", df.shape[1])
+    print(f"After Clustering: {df.shape[1]}")
+
+    # ------------------------------------------------------------
+    # 3️⃣ Optional: Autoencoder
+    # ------------------------------------------------------------
+    if use_autoencoder:
+        print("Starting Autoencoder compression...")
+
+        # Ensure the data is numeric and float32 for Keras
+        try:
+            X_input = df.astype("float32").values
+        except ValueError as e:
+            print("\n❌ DATA ERROR FOUND!")
+            print("One column contains non-numeric data.")
+            print("Run: print(df.dtypes[df.dtypes == 'object'])")
+            raise e
+
+        input_dim = X_input.shape[1]
+
+        # ---------------------------
+        # Autoencoder Architecture
+        # ---------------------------
+
+        input_layer = Input(shape=(input_dim,))
+
+        # Encoder (deep encoder → better compression)
+        e = Dense(128, activation="relu")(input_layer)
+        e = Dense(64, activation="relu")(e)
+        bottleneck = Dense(n_ae_features, activation="linear")(e)
+
+        # Decoder (mirroring encoder)
+        d = Dense(64, activation="relu")(bottleneck)
+        d = Dense(128, activation="relu")(d)
+
+        # *** IMPORTANT ***
+        # Use linear output because your data includes StandardScaler features
+        output_layer = Dense(input_dim, activation="linear")(d)
+
+        # Build models
+        autoencoder = Model(inputs=input_layer, outputs=output_layer)
+        encoder = Model(inputs=input_layer, outputs=bottleneck)
+
+        autoencoder.compile(optimizer="adam", loss="mse")
+
+        # ---------------------------
+        # Training (with validation)
+        # ---------------------------
+
+        autoencoder.fit(
+            X_input,
+            X_input,
+            epochs=ae_epochs,
+            batch_size=32,
+            shuffle=True,
+            validation_split=0.1,  # helps prevent overfitting
+            verbose=0,
+        )
+
+        # ---------------------------
+        # Encode & Replace DF
+        # ---------------------------
+
+        encoded_data = encoder.predict(X_input)
+
+        feat_cols = [f"ae_feature_{i}" for i in range(n_ae_features)]
+        df = pd.DataFrame(encoded_data, columns=feat_cols)
+
+        print(f"After Autoencoder: {df.shape[1]} synthetic features")
+
     df.to_csv(output_path, index=False)
+    print(f"Saved to {output_path}")
