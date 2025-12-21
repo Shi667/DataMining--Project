@@ -8,6 +8,7 @@ from sklearn.feature_selection import VarianceThreshold
 from sklearn.cluster import AgglomerativeClustering
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense
+import matplotlib.pyplot as plt
 
 
 def analyze_correlation_variance(csv_path, target_col="fire", corr_threshold=0.9):
@@ -210,15 +211,21 @@ def unsupervised_feature_reduction(
         # Training (with validation)
         # ---------------------------
 
-        autoencoder.fit(
+        history = autoencoder.fit(
             X_input,
             X_input,
             epochs=ae_epochs,
             batch_size=32,
             shuffle=True,
-            validation_split=0.1,  # helps prevent overfitting
-            verbose=0,
+            validation_split=0.1,
+            verbose=1,
         )
+
+        plt.plot(history.history["loss"], label="train")
+        plt.plot(history.history["val_loss"], label="val")
+        plt.legend()
+        plt.title("Autoencoder Reconstruction Loss")
+        plt.show()
 
         # ---------------------------
         # Encode & Replace DF
