@@ -240,3 +240,15 @@ def unsupervised_feature_reduction(
 
     df.to_csv(output_path, index=False)
     print(f"Saved to {output_path}")
+
+
+nb_features = 15
+unsupervised_feature_reduction(
+    csv_path="../data/preprocessed/preprocessed_data.csv",
+    output_path=f"../data/preprocessed/preprocessed_reduced_data_unsupervised_{nb_features}.csv",
+    var_threshold=0.01,
+    cluster_distance=0.2,
+    use_autoencoder=True,
+    n_ae_features=nb_features,
+    ae_epochs=50,
+)

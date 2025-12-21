@@ -1,0 +1,10 @@
+K,init,algorithm,Silhouette
+3,k-means++,minibatch_kmeans,0.21987008681185194
+5,k-means++,minibatch_kmeans,0.17926560047108658
+8,k-means++,minibatch_kmeans,0.24071961231587827
+11,k-means++,minibatch_kmeans,0.23231504734545141
+12,k-means++,minibatch_kmeans,0.26357686172065176
+14,k-means++,minibatch_kmeans,0.2675360775027191
+16,k-means++,minibatch_kmeans,0.2690081636677078
+21,k-means++,minibatch_kmeans,0.28742108898577307
+26,k-means++,minibatch_kmeans,0.2857051529780382
