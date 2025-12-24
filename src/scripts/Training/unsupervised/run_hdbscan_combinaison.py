@@ -39,6 +39,12 @@ def run_hdbscan_combinations(
     Run HDBSCAN on explicit parameter combinations and save results to CSV.
     """
 
+    # --------------------------------------------------
+    # 🔑 Ignore lat/lon ONLY for the algorithm
+    # --------------------------------------------------
+    id_cols = ["latitude", "longitude"]
+    X_algo = X.drop(columns=[c for c in id_cols if c in X.columns])
+
     output_path = _get_non_existing_path(output_path)
 
     all_rows = []
@@ -58,7 +64,7 @@ def run_hdbscan_combinations(
             cluster_selection_method=cluster_selection_method,
         )
 
-        labels = clusterer.fit_predict(X)
+        labels = clusterer.fit_predict(X_algo)
 
         N = len(labels)
         n_noise = np.sum(labels == -1)
@@ -81,15 +87,14 @@ def run_hdbscan_combinations(
         # -----------------------
         mask = labels != -1
 
-        # Ensure NumPy arrays (IMPORTANT)
-        X_clean = X[mask]
+        X_clean = X_algo[mask]
         if isinstance(X_clean, pd.DataFrame):
             X_clean = X_clean.to_numpy()
 
         labels_clean = labels[mask]
 
         # -----------------------
-        # Metrics
+        # Metrics (NO lat/lon)
         # -----------------------
         if len(np.unique(labels_clean)) >= 2:
 
@@ -138,7 +143,6 @@ def run_hdbscan_combinations(
         )
 
         print(row)
-
         all_rows.append(row)
 
     return pd.DataFrame(all_rows)

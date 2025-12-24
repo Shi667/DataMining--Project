@@ -55,6 +55,12 @@ def run_hdbscan_grid(
     - incremental CSV saving (safe for long runs)
     """
 
+    # --------------------------------------------------
+    # 🔑 Ignore lat/lon ONLY for the algorithm
+    # --------------------------------------------------
+    id_cols = ["latitude", "longitude"]
+    X_algo = X.drop(columns=[c for c in id_cols if c in X.columns])
+
     # Create CSV with header if it doesn't exist
     if not os.path.exists(output_path):
         pd.DataFrame().to_csv(output_path, index=False)
@@ -73,7 +79,7 @@ def run_hdbscan_grid(
             cluster_selection_method=cluster_selection_method,
         )
 
-        labels = clusterer.fit_predict(X)
+        labels = clusterer.fit_predict(X_algo)
 
         N = len(labels)
         n_noise = np.sum(labels == -1)
@@ -93,11 +99,11 @@ def run_hdbscan_grid(
 
         # Remove noise for metric computation
         mask = labels != -1
-        X_clean = X[mask]
+        X_clean = X_algo[mask]
         labels_clean = labels[mask]
 
         # -----------------------
-        # Metrics
+        # Metrics (NO lat/lon)
         # -----------------------
         if len(np.unique(labels_clean)) >= 2:
 
@@ -112,10 +118,10 @@ def run_hdbscan_grid(
 
                 for i in range(silhouette_n_repeats):
                     Xs, ls = stratified_sample(
-                        X,
+                        X_algo,
                         labels,
                         total_samples=silhouette_sample_size,
-                        random_state=random_state + i,  # different seed each time
+                        random_state=random_state + i,
                     )
                     silhouette_scores.append(silhouette_score(Xs, ls))
 
@@ -123,7 +129,6 @@ def run_hdbscan_grid(
                 row["Silhouette_std"] = np.std(silhouette_scores)
 
         else:
-            # Degenerate solution: all noise or one cluster
             row["CH"] = np.nan
             row["DBI"] = np.nan
             row["Silhouette"] = np.nan
@@ -140,7 +145,6 @@ def run_hdbscan_grid(
             index=False,
         )
 
-        # Print after each evaluation
         print(row)
 
     return pd.read_csv(output_path)

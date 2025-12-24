@@ -26,14 +26,20 @@ def run_clarans_grid(
     numlocal_values=(5,),
     maxneighbor_values=(50,),
     metrics=("ch", "dbi", "silhouette", "avg_medoid_dist"),
-    sample_size=50_000,  # sampling for CLARANS itself
-    eval_sample_size=50_000,  # sampling for metrics
+    sample_size=50_000,
+    eval_sample_size=50_000,
     silhouette_n_repeats=5,
     random_state=42,
 ):
     np.random.seed(random_state)
 
-    N = X.shape[0]
+    # --------------------------------------------------
+    # 🔑 Ignore lat/lon ONLY for the algorithm
+    # --------------------------------------------------
+    id_cols = ["latitude", "longitude"]
+    X_algo = X.drop(columns=[c for c in id_cols if c in X.columns])
+
+    N = X_algo.shape[0]
     results = []
 
     # -----------------------
@@ -41,11 +47,12 @@ def run_clarans_grid(
     # -----------------------
     if sample_size < N:
         sample_idx = np.random.choice(N, sample_size, replace=False)
-        X_sample = X[sample_idx]
+        X_sample = X_algo.iloc[sample_idx]
     else:
-        X_sample = X
+        sample_idx = np.arange(N)
+        X_sample = X_algo
 
-    X_sample_list = X_sample.tolist()
+    X_sample_list = X_sample.values.tolist()
 
     grid = list(product(k_values, numlocal_values, maxneighbor_values))
 
@@ -64,8 +71,8 @@ def run_clarans_grid(
         # Map medoids back to full data indices
         medoid_indices = sample_idx[medoids_sample]
 
-        # Assign labels to full dataset
-        labels = assign_labels_from_medoids(X, medoid_indices)
+        # Assign labels to full dataset (NO lat/lon)
+        labels = assign_labels_from_medoids(X_algo.values, medoid_indices)
 
         row = {
             "K": K,
@@ -75,25 +82,25 @@ def run_clarans_grid(
         }
 
         # -----------------------
-        # Metrics
+        # Metrics (NO lat/lon)
         # -----------------------
         if "ch" in metrics:
-            row["CH"] = calinski_harabasz_score(X, labels)
+            row["CH"] = calinski_harabasz_score(X_algo, labels)
 
         if "dbi" in metrics:
-            row["DBI"] = davies_bouldin_score(X, labels)
+            row["DBI"] = davies_bouldin_score(X_algo, labels)
 
         if "silhouette" in metrics:
             sil_scores = []
             for i in range(silhouette_n_repeats):
                 idx = np.random.choice(N, eval_sample_size, replace=False)
-                sil_scores.append(silhouette_score(X[idx], labels[idx]))
+                sil_scores.append(silhouette_score(X_algo.values[idx], labels[idx]))
 
             row["Silhouette"] = np.mean(sil_scores)
             row["Silhouette_std"] = np.std(sil_scores)
 
         if "avg_medoid_dist" in metrics:
-            distances = pairwise_distances(X, X[medoid_indices])
+            distances = pairwise_distances(X_algo.values, X_algo.values[medoid_indices])
             row["AvgMedoidDist"] = np.mean(np.min(distances, axis=1))
 
         results.append(row)

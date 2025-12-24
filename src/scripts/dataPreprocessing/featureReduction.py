@@ -119,14 +119,27 @@ def unsupervised_feature_reduction(
     use_autoencoder=False,
     n_ae_features=10,
     ae_epochs=50,
-    percentage_data=1,  # example: 30% of data
+    percentage_data=1,
 ):
     df = pd.read_csv(csv_path)
 
+    # ----------------------------------------
+    # 🔑 ID columns (kept but NOT reduced)
+    # ----------------------------------------
+    id_cols = ["latitude", "longitude"]
+    id_df = df[id_cols].copy()
+
+    # Remove label if exists
     if "fire" in df.columns:
         df = df.drop(columns=["fire"])
+
+    # Remove ID cols from feature reduction
+    df = df.drop(columns=id_cols)
+
     df = df.sample(frac=percentage_data, random_state=42)
-    print(f"Initial features: {df.shape[1]}")
+    id_df = id_df.loc[df.index]  # keep alignment
+
+    print(f"Initial features (without lat/lon): {df.shape[1]}")
 
     # ------------------------------------------------------------
     # 1️⃣ Remove Low-variance features
@@ -171,45 +184,22 @@ def unsupervised_feature_reduction(
     if use_autoencoder:
         print("Starting Autoencoder compression...")
 
-        # Ensure the data is numeric and float32 for Keras
-        try:
-            X_input = df.astype("float32").values
-        except ValueError as e:
-            print("\n❌ DATA ERROR FOUND!")
-            print("One column contains non-numeric data.")
-            print("Run: print(df.dtypes[df.dtypes == 'object'])")
-            raise e
-
+        X_input = df.astype("float32").values
         input_dim = X_input.shape[1]
 
-        # ---------------------------
-        # Autoencoder Architecture
-        # ---------------------------
-
         input_layer = Input(shape=(input_dim,))
-
-        # Encoder (deep encoder → better compression)
         e = Dense(128, activation="relu")(input_layer)
         e = Dense(64, activation="relu")(e)
         bottleneck = Dense(n_ae_features, activation="linear")(e)
 
-        # Decoder (mirroring encoder)
         d = Dense(64, activation="relu")(bottleneck)
         d = Dense(128, activation="relu")(d)
-
-        # *** IMPORTANT ***
-        # Use linear output because your data includes StandardScaler features
         output_layer = Dense(input_dim, activation="linear")(d)
 
-        # Build models
-        autoencoder = Model(inputs=input_layer, outputs=output_layer)
-        encoder = Model(inputs=input_layer, outputs=bottleneck)
+        autoencoder = Model(input_layer, output_layer)
+        encoder = Model(input_layer, bottleneck)
 
         autoencoder.compile(optimizer="adam", loss="mse")
-
-        # ---------------------------
-        # Training (with validation)
-        # ---------------------------
 
         history = autoencoder.fit(
             X_input,
@@ -221,24 +211,19 @@ def unsupervised_feature_reduction(
             verbose=1,
         )
 
-        plt.plot(history.history["loss"], label="train")
-        plt.plot(history.history["val_loss"], label="val")
-        plt.legend()
-        plt.title("Autoencoder Reconstruction Loss")
-        plt.show()
-
-        # ---------------------------
-        # Encode & Replace DF
-        # ---------------------------
-
         encoded_data = encoder.predict(X_input)
-
-        feat_cols = [f"ae_feature_{i}" for i in range(n_ae_features)]
-        df = pd.DataFrame(encoded_data, columns=feat_cols)
+        df = pd.DataFrame(
+            encoded_data,
+            columns=[f"ae_feature_{i}" for i in range(n_ae_features)],
+            index=df.index,
+        )
 
         print(f"After Autoencoder: {df.shape[1]} synthetic features")
 
-    df.to_csv(output_path, index=False)
+    # ------------------------------------------------------------
+    # 🔁 Reattach latitude & longitude
+    # ------------------------------------------------------------
+    final_df = pd.concat([id_df, df], axis=1)
+
+    final_df.to_csv(output_path, index=False)
     print(f"Saved to {output_path}")
-
-

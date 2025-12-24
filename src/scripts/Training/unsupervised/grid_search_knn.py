@@ -43,22 +43,28 @@ def run_kmeans_grid(
     algorithm="kmeans",  # "kmeans" | "minibatch_kmeans"
     max_iter=300,
     n_init=10,
-    batch_size=1024,  # only for minibatch_kmeans
+    batch_size=1024,
     random_state=42,
     silhouette_sample_size=50_000,
-    silhouette_n_repeats=5,  # number of times to repeat silhouette evaluation
+    silhouette_n_repeats=5,
 ):
     if algorithm not in {"kmeans", "minibatch_kmeans"}:
         raise ValueError("algorithm must be 'kmeans' or 'minibatch_kmeans'")
 
-    N = X.shape[0]
+    # --------------------------------------------------
+    # 🔑 Ignore lat/lon ONLY for the algorithm
+    # --------------------------------------------------
+    id_cols = ["latitude", "longitude"]
+    X_algo = X.drop(columns=[c for c in id_cols if c in X.columns])
+
+    N = X_algo.shape[0]
     results = []
 
     grid = list(product(k_values, init_methods))
 
     for K, init in tqdm(grid, desc=f"{algorithm} Grid Search"):
 
-        # Fit KMeans / MiniBatchKMeans
+        # Fit model
         if algorithm == "kmeans":
             model = KMeans(
                 n_clusters=K,
@@ -78,7 +84,7 @@ def run_kmeans_grid(
                 random_state=random_state,
             )
 
-        labels = model.fit_predict(X)
+        labels = model.fit_predict(X_algo)
 
         row = {
             "K": K,
@@ -87,29 +93,27 @@ def run_kmeans_grid(
         }
 
         # -----------------------
-        # Metrics
+        # Metrics (NO lat/lon)
         # -----------------------
         if "ch" in metrics:
-            row["CH"] = calinski_harabasz_score(X, labels)
+            row["CH"] = calinski_harabasz_score(X_algo, labels)
 
         if "dbi" in metrics:
-            row["DBI"] = davies_bouldin_score(X, labels)
+            row["DBI"] = davies_bouldin_score(X_algo, labels)
 
         if "silhouette" in metrics:
             silhouette_scores = []
             for i in range(silhouette_n_repeats):
                 Xs, ls = stratified_sample(
-                    X,
+                    X_algo,
                     labels,
                     total_samples=silhouette_sample_size,
-                    random_state=random_state + i,  # different seed each time
+                    random_state=random_state + i,
                 )
                 silhouette_scores.append(silhouette_score(Xs, ls))
 
-            row["Silhouette"] = np.mean(silhouette_scores)  # average over repeats
-            row["Silhouette_std"] = np.std(
-                silhouette_scores
-            )  # optional: track variability
+            row["Silhouette"] = np.mean(silhouette_scores)
+            row["Silhouette_std"] = np.std(silhouette_scores)
 
         if "wcss" in metrics:
             row["WCSS_per_point"] = model.inertia_ / N
