@@ -1,3 +1,4 @@
+import numpy as np
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans, MiniBatchKMeans
@@ -23,6 +24,7 @@ def kmeans_with_map(
     silhouette_sample_size=50_000,
     silhouette_n_repeats=5,
 ):
+    import numpy as np
 
     # -----------------------------
     # Separate geometry & features
