@@ -1,65 +1,65 @@
 import geopandas as gpd
+from shapely.geometry import box
 import os
 
 
-from shapely.geometry import box
+def save_shapefile_north_of_latitude(
+    input_shapefile_path,
+    output_shapefile_path,
+    latitude_cut,
+):
+    """
+    Save the part of a shapefile that is NORTH of a given latitude.
 
+    Parameters
+    ----------
+    input_shapefile_path : str
+        Path to original shapefile
+    output_shapefile_path : str
+        Path where the clipped shapefile will be saved
+    latitude_cut : float
+        Latitude threshold (keep geometry >= this latitude)
+    """
 
-def clip_by_latitude(input_shp, output_folder, min_latitude, output_name="cropped.shp"):
-    gdf = gpd.read_file(input_shp)
+    # -----------------------------
+    # Load shapefile
+    # -----------------------------
+    gdf = gpd.read_file(input_shapefile_path)
 
-    # Ensure correct CRS
-    if gdf.crs != "EPSG:4326":
-        gdf = gdf.to_crs("EPSG:4326")
+    # Ensure geographic CRS
+    if gdf.crs is None:
+        gdf = gdf.set_crs(epsg=4326)
+    else:
+        gdf = gdf.to_crs(epsg=4326)
 
-    # Create a clipping rectangle (west=-180, east=180, south=min_latitude, north=90)
-    clip_rect = box(-180, min_latitude, 180, 90)
+    # -----------------------------
+    # Create clipping box
+    # -----------------------------
+    minx, miny, maxx, maxy = gdf.total_bounds
 
-    clipped = gpd.clip(gdf, clip_rect)
+    north_box = box(
+        minx,
+        latitude_cut,  # south boundary
+        maxx,
+        maxy,
+    )
 
-    os.makedirs(output_folder, exist_ok=True)
-    output_path = os.path.join(output_folder, output_name)
-    clipped.to_file(output_path)
+    north_gdf = gdf.clip(north_box)
 
-    print("✔ Exact clipping done:", output_path)
+    # -----------------------------
+    # Create output directory
+    # -----------------------------
+    os.makedirs(os.path.dirname(output_shapefile_path), exist_ok=True)
 
+    # -----------------------------
+    # Save shapefile
+    # -----------------------------
+    north_gdf.to_file(output_shapefile_path)
 
-clip_by_latitude(
-    input_shp="../../../data/shapefiles/combined/full/alg_tun.shp",
-    output_folder="../data/shapefiles/combined/north/",
-    min_latitude=30.0,  # cut Sahara
-    output_name="alg_tun_north.shp",
-)
+    print(
+        f"✅ Shapefile saved:\n"
+        f"   {output_shapefile_path}\n"
+        f"   (North of latitude {latitude_cut})"
+    )
 
-
-import geopandas as gpd
-import matplotlib.pyplot as plt
-
-# 1. Specify the path to your Shapefile
-# NOTE: Replace 'path/to/your/shapefile.shp' with the actual file path.
-shapefile_path = "../../../data/shapefiles/combined/north/alg_tun_north.shp"
-
-try:
-    # 2. Load the Shapefile into a GeoDataFrame
-    gdf = gpd.read_file(shapefile_path)
-
-    # 3. Create a plot (figure and axis)
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-
-    # 4. Plot the GeoDataFrame
-    # 'edgecolor' sets the color of the boundary lines.
-    # 'facecolor' sets the fill color.
-    # 'ax=ax' tells GeoPandas to plot on the axis we created.
-    gdf.plot(ax=ax, edgecolor="black", facecolor="lightblue")
-
-    # 5. Add a title and remove axis for a cleaner map view
-    ax.set_title(f"Displaying Shapefile: {shapefile_path.split('/')[-1]}", fontsize=16)
-    ax.set_axis_off()  # Hides the x and y coordinate axes
-
-    # 6. Display the plot
-    plt.show()
-
-except FileNotFoundError:
-    print(f"Error: The Shapefile at '{shapefile_path}' was not found.")
-except Exception as e:
-    print(f"An error occurred while reading or plotting the Shapefile: {e}")
+    return north_gdf
