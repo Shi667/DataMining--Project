@@ -1,0 +1,18 @@
+Introduction générale
+Amélioration
+
+Chapitre 1
+Amélioration :Introduction conclusion du chapitre, présentation du dataset, EDA, etc.
+
+Conclusion générale
+
+UNSUPERVISED :
+
+K-means + HDBSCAN + CLARANS from scratch (ne t’inquiète pas, ChatGPT peut aider), puis faire un rapport comparant les implémentations from scratch avec les fonctions intégrées (résultats + temps d’exécution), en s’inspirant du chapitre de supervised learning.
+
+Temps d’exécution des algorithmes de clustering (rapport)
+⚠️ Attention : une seule exécution, pas de grid search.
+→ S’inspirer du chapitre de supervised learning.
+
+CLARANS :
+Rapport + revoir pourquoi le temps d’exécution est très élevé, trouver des solutions (réduction de la résolution, sous-ensemble du dataset, choix des bons paramètres, etc.) + exécuter le code CLARANS + visualisation sur la carte.
