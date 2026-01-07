@@ -1,0 +1,20 @@
+name: projetDMs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy=1.26
+  - pandas
+  - scipy
+  - scikit-learn
+  - scikit-learn-extra
+  - hdbscan=0.8.33
+  - geopandas
+  - shapely
+  - fiona
+  - pyproj
+  - matplotlib
+  - seaborn
+  - networkx
+  - tqdm
+  - ipykernel

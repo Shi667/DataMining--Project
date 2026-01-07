@@ -1,3 +1,7 @@
+import pandas as pd
+import numpy as np  # Si vous l'utilisez aussi
+
+
 def dominates(a, b, metrics, directions):
     """
     Returns True if solution a dominates solution b
@@ -77,6 +81,3 @@ def extract_pareto_front(
 
     pareto_df = df[pareto_mask].reset_index(drop=True)
     return pareto_df
-
-
-

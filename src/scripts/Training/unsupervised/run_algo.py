@@ -221,3 +221,135 @@ def hdbscan_with_map(
     plt.show()
 
     return gdf_points, metrics_result
+
+
+
+def clara_with_map(
+    df,
+    shapefile_path,
+    k_value,
+    n_sampling=80,
+    n_sampling_iter=5,
+    max_iter=300,
+    metrics=("ch", "dbi", "silhouette"),
+    random_state=42,
+    silhouette_sample_size=50_000,
+    silhouette_n_repeats=5,
+):
+    """
+    Run CLARA clustering and visualize on map
+    """
+    from sklearn_extra.cluster import KMedoids
+    from sklearn.metrics import pairwise_distances
+    
+    # -----------------------------
+    # Separate geometry & features
+    # -----------------------------
+    geo_cols = ["latitude", "longitude"]
+    X_algo = df.drop(columns=geo_cols)
+    coords = df[geo_cols]
+    
+    N = len(X_algo)
+    
+    # -----------------------------
+    # CLARA Algorithm
+    # -----------------------------
+    best_medoids = None
+    best_cost = float('inf')
+    
+    for iteration in range(n_sampling_iter):
+        # Calculate sample size
+        actual_sample_size = min(n_sampling + 2 * k_value, N)
+        
+        # Random sample
+        sample_idx = np.random.choice(N, actual_sample_size, replace=False)
+        X_sample = X_algo.iloc[sample_idx]
+        
+        # K-Medoids on sample
+        kmedoids = KMedoids(
+            n_clusters=k_value,
+            method="alternate",
+            init="k-medoids++",
+            max_iter=max_iter,
+            random_state=random_state + iteration,
+        )
+        
+        kmedoids.fit(X_sample.values)
+        
+        # Map medoids back to full dataset indices
+        medoid_indices = sample_idx[kmedoids.medoid_indices_]
+        
+        # Evaluate cost on FULL dataset
+        distances = pairwise_distances(X_algo.values, X_algo.values[medoid_indices])
+        cost = np.sum(np.min(distances, axis=1))
+        
+        # Keep best medoids
+        if cost < best_cost:
+            best_cost = cost
+            best_medoids = medoid_indices
+    
+    # Assign all points to best medoids
+    medoids = X_algo.values[best_medoids]
+    distances = pairwise_distances(X_algo.values, medoids)
+    labels = np.argmin(distances, axis=1)
+    
+    # -----------------------------
+    # Metrics
+    # -----------------------------
+    metrics_result = {}
+    
+    if "ch" in metrics:
+        metrics_result["CH"] = calinski_harabasz_score(X_algo, labels)
+    
+    if "dbi" in metrics:
+        metrics_result["DBI"] = davies_bouldin_score(X_algo, labels)
+    
+    if "silhouette" in metrics:
+        sil_scores = []
+        for i in range(silhouette_n_repeats):
+            idx = np.random.choice(
+                N,
+                min(silhouette_sample_size, N),
+                replace=False,
+            )
+            sil_scores.append(silhouette_score(X_algo.iloc[idx], labels[idx]))
+        metrics_result["Silhouette"] = np.mean(sil_scores)
+        metrics_result["Silhouette_std"] = np.std(sil_scores)
+    
+    # -----------------------------
+    # Create GeoDataFrame
+    # -----------------------------
+    gdf_points = gpd.GeoDataFrame(
+        df.copy(),
+        geometry=gpd.points_from_xy(coords["longitude"], coords["latitude"]),
+        crs="EPSG:4326",
+    )
+    gdf_points["cluster"] = labels
+    
+    # -----------------------------
+    # Load shapefile
+    # -----------------------------
+    gdf_shape = gpd.read_file(shapefile_path)
+    gdf_shape = gdf_shape.to_crs(gdf_points.crs)
+    
+    # -----------------------------
+    # Plot
+    # -----------------------------
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    gdf_shape.plot(ax=ax, color="white", edgecolor="black")
+    gdf_points.plot(
+        ax=ax,
+        column="cluster",
+        cmap="tab20",
+        markersize=3,
+        legend=True,
+    )
+    
+    ax.set_title(
+        f"CLARA | K={k_value}, n_sampling={n_sampling}, iter={n_sampling_iter}\n"
+        + " | ".join(f"{k}: {v:.3f}" for k, v in metrics_result.items())
+    )
+    ax.axis("off")
+    plt.show()
+    
+    return gdf_points, metrics_result
